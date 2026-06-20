@@ -1,5 +1,5 @@
 #include <WiFi.h> // Control of wirelesss network connections for Wi-Fi enabled microcontrollers
-#include <esp_now.h> // Wireless Wi-Fi communcation protocol
+#include <esp_now.h> // Wireless communcation protocol
 
 // GPIO 4
 #define outputPin 4 
