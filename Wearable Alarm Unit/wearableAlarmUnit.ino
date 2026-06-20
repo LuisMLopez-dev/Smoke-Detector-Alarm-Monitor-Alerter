@@ -5,7 +5,7 @@
 #define outputPin 4 
 
 typedef struct{ //Typedef is used here to make an alias for this struct
-  bool smokeDetectorAlarmTriggered; // Flag for the smoke detector alarm
+  bool smokeDetectorAlarmTriggered; // Flag for the smoke detector alarm, for communication
 } structMessage; // Alias name for this struct
 
 structMessage incomingData = {false}; // Variable to hold the received data, default state set known state of false
