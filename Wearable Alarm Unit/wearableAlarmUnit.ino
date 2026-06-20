@@ -29,7 +29,7 @@ void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingDataBytes,
   alarmState = incomingData.smokeDetectorAlarmTriggered;
 
   // Future Testing Notes: Can be modified for less serial spam, or removed once verified
-  // Prints the alarm state to verify in testing that the communication was succesful and matches the state of the alarm
+  // Prints the alarm state to verify in testing that the communication was successful and matches the state of the alarm
   Serial.print("Alarm State: "); 
   Serial.println(incomingData.smokeDetectorAlarmTriggered);
 }
