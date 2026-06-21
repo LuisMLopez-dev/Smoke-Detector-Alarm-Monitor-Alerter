@@ -4,31 +4,32 @@ The program files and firmware for a senior design project on omproving the acce
 ## Overview
 Smoke detectors rely primarily on adubile alerts which can ineffective for individuals who are deaf, hard of hearing, or have varying degress of hearing loss. This goal of this project is to develop a low-cost, non-invasive, no installtion-required alert system that detects smoke alarm patterns and wirelessly communicates to multiple receiver alamr units.
 
-## Four Main Components
-Listener Unit
-Placeable Alarm Unit
-Wearable Alarm Unit
-Smartphone Application
+## Main Components
+1. Listener Unit
+2. Placeable Alarm Unit
+3. Wearable Alarm Unit
+4. Smartphone Application
 
 ### Listener Unit
-Digital signal processing on an audio input signal
-Detects the Temporal-3 (T3) alarm pattern which is three beeps, each 0.5 s, and then a pause that is 1.5 s
-Uses ADC sampling and timing-based state transitions for pattern recognition
+- Digital signal processing on an audio input signal
+- Detects the Temporal-3 (T3) alarm pattern which is three beeps, each 0.5 s, and then a pause that is 1.5 s
+- Uses ADC sampling and timing-based state transitions for pattern recognition
+
 Transmits alert status via:
 1. ESP-NOW which is device-to-device communication
 2. Bluetooth Low Energy (BLE) for smartphone connectivity
 
 ### Placeable Alarm Unit
-Receives ESP-NOW messages/data from the listener unit
-Activates high-brightness LEDs for visual alerts
-Designed for placement in key locations such as the bedroom, living room, etc.
+- Receives ESP-NOW messages/data from the listener unit
+- Activates high-brightness LEDs for visual alerts
+- Designed for placement in key locations such as the bedroom, living room, etc.
 
 ### Wearable Alarm Unit
-Receives ESP-NOW messages/data from the listener unit
-Activates a vibration motor to alert the user through haptic feedback
-Designed to provide immediate personal alerts
+- Receives ESP-NOW messages/data from the listener unit
+- Activates a vibration motor to alert the user through haptic feedback
+- Designed to provide immediate personal alerts
 
 ### Smartphone Application: WIP
-Connects to the listener unit via BLE
-Receives alarm notifications in real time
-Utilizes vibration and high-priority notifications to alert the user
+- Connects to the listener unit via BLE
+- Receives alarm notifications in real time
+- Utilizes vibration and high-priority notifications to alert the user
