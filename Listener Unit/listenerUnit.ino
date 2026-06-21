@@ -2,7 +2,7 @@
 #include <esp_now.h> // Wireless communcation protocol
 
 // BLE Library
-#include <NimBLEDevice.h>
+#include <NimBLEDevice.h> // Lightweird alternative to Bluedroid. Uses less flash and RAM
 
 #define ADC_PIN 1 // GPIO 1
 #define SAMPLE_RATE 2000 // 2000 Hz, or 2000 samples per second
@@ -32,7 +32,7 @@ bool currentSoundState = false;
 bool lastSoundState = false;
 
 // Global Timing Variables
-unsigned long lastStateTransistionTime = 0; // The time when the state changed from either on to off, or off to on
+unsigned long lastStateTransitionTime = 0; // The time when the state changed from either on to off, or off to on
 unsigned long lastSampleTime = 0; // Last time in which the analog signal was sampled through the ADC pin
 unsigned long lastSendTime = 0; // Last previous time when a message was transmitted
 unsigned long lastT3Time = 0; // Last previous time where a T3 code was detected
@@ -81,6 +81,7 @@ void setup(){
   Serial.begin(115200); // Baud rate: speed for serial communication
 
   analogReadResolution(12); // The ESP32-S3 ADC's resolution is 12 bits
+  lastStateTransitionTime = millis(); // Initial current time in ms
 
   // Sets the microcontroller in station mode, allowing to to send or recieve data packets
   WiFi.mode(WIFI_STA);
@@ -98,23 +99,28 @@ void setup(){
   addPeer(receiver2);
 
   // Sets the device name that the phone will see
-  BLEDevice::init("SmokeAlarmListener");
+  NimBLEDevice::init("SmokeAlarmListener");
 
-  BLEServer *pServer = BLEDevice::createServer(); // Turns the ESP32 into a BLE Server
+  NimBLEServer *pServer = NimBLEDevice::createServer(); // Turns the ESP32 into a BLE Server
   pServer->setCallbacks(new MyServerCallbacks()); // Links the custom class to BLE events
 
-  // Creates a BLE service, which acts like a container/category for related data
-  BLEService *pService = pServer->createService("1234"); // 1234 is the UUID: Universally Unique Identifier
-
-  // The characterirstic is attached to the service
-  // READ allows the phone to request a value, and notify allows the ESP32 to push updates
-  alarmCharacteristic = pService->createCharacteristic("5678", BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  /*
+    Creates a BLE service, which acts like a container/category for related data
+    The characterirstic is attached to the service
+    READ allows the phone to request a value, and notify allows the ESP32 to push updates
+    The CCCD (Client Characteristic Configuration Descriptor) here is 2902
+    A phone, a client device, can enable and disable notifications or indications for this characteristic. 
+  */ 
+  NimBLEService *pService = pServer->createService("1234");
+  alarmCharacteristic = pService->createCharacteristic("5678", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  alarmCharacteristic->createDescriptor("2902"); 
 
   // Makes the service active
   pService->start();
 
   // Begins advertising, allowing other devices to now connect to it
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID("1234"); // Helps the phone discover the service
   pAdvertising->start(); // Starts the advertising
 
   Serial.println("BLE System Ready"); // Debug message for confirmation of BLE
@@ -140,12 +146,12 @@ void loop(){
     // Obtains the current time in milliseconds, to be used as a reference for when there is a change in states, on to off or off to on
     unsigned long currentTime = millis(); 
 
-    // Detects a state transistion, by comparing if the current sound state is not the same as the previous, indicating it has gone from either on to off or off to on
+    // Detects a state transition, by comparing if the current sound state is not the same as the previous, indicating it has gone from either on to off or off to on
     if(currentSoundState != lastSoundState){
-      unsigned long durationOfLastState = currentTime - lastStateTransistionTime; // Given a change in state, determine the duration that the signal was in that state
-      lastStateTransistionTime = currentTime; // Stores the current time that the state changed to be used in the next loop to calculate the duration
+      unsigned long durationOfLastState = currentTime - lastStateTransitionTime; // Given a change in state, determine the duration that the signal was in that state
+      lastStateTransitionTime = currentTime; // Stores the current time that the state changed to be used in the next loop to calculate the duration
 
-      // If the last sound state was on
+      // If the last sound state was on, meaning transitoned from on to off. For pulses
       if(lastSoundState == true){
         if(durationOfLastState > PULSE_MIN && durationOfLastState < PULSE_MAX){ // Check if the duration that the pulse was on is in the proper timing window
           pulseCount++;
@@ -155,12 +161,13 @@ void loop(){
           pulseCount = 0; // Reset the pulse count given an invalid pulse. Acts as a reset given the period of the incoming signal, and also ensures no false positives
         }
       }
-      // If the last sound state was off
+      // If the last sound state was off, meaning transitoned from off to on, For pauses
       else{ 
         // Checks if 3 pulses have occurred given the specific timing windows, and if the duration of the last state fits the the pause timing window
         if(pulseCount == 3 && durationOfLastState > PAUSE_MIN && durationOfLastState < PAUSE_MAX){
           Serial.println("T3 DETECTED"); // Temporal 3 has been detected, and the smoke detector alarm is going off
           lastT3Time = currentTime; // Record the current time that the T3 was detected
+          pulseCount = 0; // Reset pulse count after successful T3 detection
         }
       }
     }
@@ -203,7 +210,8 @@ void loop(){
       alarmCharacteristic->notify(); // Sends a notification to the connected phone with the update byte value
     }
 
-    Serial.print("Alarm State Sent: "); // Print current alarm state, for testing
+    // Print current alarm state, for testing
+    Serial.print("Alarm State Sent: "); 
     Serial.println(alarmActive);
   }
 }
