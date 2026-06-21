@@ -1,6 +1,9 @@
 #include <WiFi.h> // Control of wirelesss network connections for Wi-Fi enabled microcontrollers
 #include <esp_now.h> // Wireless communcation protocol
 
+// BLE Library
+#include <NimBLEDevice.h>
+
 #define ADC_PIN 1 // GPIO 1
 #define SAMPLE_RATE 2000 // 2000 Hz, or 2000 samples per second
 #define THRESHOLD 200 // Threshold to determine what is sound or silence. Testing is requried to fine tune it
@@ -24,18 +27,33 @@ structMessage outgoingData; // Variable to hold the data that is to be sent
 uint8_t receiver1[] = {0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC}; // NOTE: Fake address used for compiling. Must be updated after running MAC address test sketch on receivers
 uint8_t receiver2[] = {0x24, 0x6F, 0x28, 0x11, 0x22, 0x33}; // NOTE: Fake address used for compiling. Must be updated after running the MAC address test sketch on receivers
 
-// STATE VARIABLES
+// Global STATE VARIABLES
 bool currentSoundState = false;
 bool lastSoundState = false;
 
+// Global Timing Variables
 unsigned long lastStateTransistionTime = 0; // The time when the state changed from either on to off, or off to on
 unsigned long lastSampleTime = 0; // Last time in which the analog signal was sampled through the ADC pin
 unsigned long lastSendTime = 0; // Last previous time when a message was transmitted
 unsigned long lastT3Time = 0; // Last previous time where a T3 code was detected
 
 int pulseCount = 0; // Counter for the number of pulses
-
 bool alarmActive = false; // Default state of the alarm is false
+
+// Global BLE Variables
+NimBLECharacteristic *alarmCharacteristic; // Holds the alarm value, 0 or 1
+bool deviceConnected = false; // Tracks the connection state to the phone
+
+// Custom class that reacts to BLE events
+class MyServerCallbacks: public NimBLEServerCallbacks{
+  void onConnect(NimBLEServer* pServer){ // When the phone connects
+    deviceConnected = true; // Trigger flag
+  }
+
+  void onDisconnect(NimBLEServer* pServer){  // When the phone disconnects
+    deviceConnected = false; // Trigger flag
+  }
+};
 
 // The send callback function ensures that outgoing data was sent 
 void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status){
@@ -78,6 +96,28 @@ void setup(){
   // Adds any receivers as a peer to this microcontroller
   addPeer(receiver1); 
   addPeer(receiver2);
+
+  // Sets the device name that the phone will see
+  BLEDevice::init("SmokeAlarmListener");
+
+  BLEServer *pServer = BLEDevice::createServer(); // Turns the ESP32 into a BLE Server
+  pServer->setCallbacks(new MyServerCallbacks()); // Links the custom class to BLE events
+
+  // Creates a BLE service, which acts like a container/category for related data
+  BLEService *pService = pServer->createService("1234"); // 1234 is the UUID: Universally Unique Identifier
+
+  // The characterirstic is attached to the service
+  // READ allows the phone to request a value, and notify allows the ESP32 to push updates
+  alarmCharacteristic = pService->createCharacteristic("5678", BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+
+  // Makes the service active
+  pService->start();
+
+  // Begins advertising, allowing other devices to now connect to it
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->start(); // Starts the advertising
+
+  Serial.println("BLE System Ready"); // Debug message for confirmation of BLE
 }
 
 void loop(){
@@ -146,8 +186,22 @@ void loop(){
 
     outgoingData.smokeDetectorAlarmTriggered = alarmActive; // Trigger the flag for communication
 
+    // ESP-NOW Transmission
     esp_now_send(receiver1, (uint8_t*)&outgoingData, sizeof(outgoingData)); // Send to receiver 1
     esp_now_send(receiver2, (uint8_t*)&outgoingData, sizeof(outgoingData)); // Send to recevier 2
+
+    // BLE Transmission
+    if(deviceConnected){ // Data can only be sent if the phone is connected
+      uint8_t value; // A 1-byte value to send over BLE indicating 0 for no alarm, or 1 for alarm
+      if(alarmActive){ // If the alarm is going off
+        value = 1; // Value is true
+      }
+      else{ // If the alarm is not going off
+        value = 0; // Value is false
+      }
+      alarmCharacteristic->setValue(&value, 1); // &value is a pointer to data, and 1 is the size in bytes
+      alarmCharacteristic->notify(); // Sends a notification to the connected phone with the update byte value
+    }
 
     Serial.print("Alarm State Sent: "); // Print current alarm state, for testing
     Serial.println(alarmActive);
