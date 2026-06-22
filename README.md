@@ -2,7 +2,7 @@
 The program files and firmware for a senior design project on omproving the accessibility for smoke detector alerts are contained here.
 
 ## Overview
-Smoke detectors rely primarily on adubile alerts which can ineffective for individuals who are deaf, hard of hearing, or have varying degress of hearing loss. This goal of this project is to develop a low-cost, non-invasive, no installtion-required alert system that detects smoke alarm patterns and wirelessly communicates to multiple receiver alamr units.
+Smoke detectors rely primarily on adubile alerts which can ineffective for individuals who are deaf, hard of hearing, or have varying degrees of hearing loss. The goal of this project is to develop a low-cost, non-invasive, no installation-required alert system that detects smoke alarm patterns and wirelessly communicates to multiple receiver alarm units.
 
 ## Main Components
 1. Listener Unit
@@ -29,7 +29,7 @@ Transmits alert status via:
 - Activates a vibration motor to alert the user through haptic feedback
 - Designed to provide immediate personal alerts
 
-### Smartphone Application: WIP
+### Smartphone Application: WIP!
 - Connects to the listener unit via BLE
 - Receives alarm notifications in real time
 - Utilizes vibration and high-priority notifications to alert the user
