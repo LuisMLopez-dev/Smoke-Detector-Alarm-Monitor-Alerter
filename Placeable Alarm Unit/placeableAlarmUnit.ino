@@ -4,7 +4,7 @@
 // GPIO 4
 #define outputPin 4 
 
-typedef struct{ //Typedef is used here to make an alias for this struct
+typedef struct{ // Typedef is used here to make an alias for this struct
   bool smokeDetectorAlarmTriggered; // Flag for the smoke detector alarm, for communication
 } structMessage; // Alias name for this struct
 
