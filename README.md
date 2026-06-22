@@ -17,12 +17,12 @@ Smoke detectors rely primarily on adubile alerts which can ineffective for indiv
 
 Transmits alert status via:
 1. ESP-NOW which is device-to-device communication
-2. Bluetooth Low Energy (BLE) for smartphone connectivity
+2. Bluetooth Low Energy, or BLE, for smartphone connectivity
 
 ### Placeable Alarm Unit
 - Receives ESP-NOW messages/data from the listener unit
-- Activates high-brightness LEDs for visual alerts
-- Designed for placement in key locations such as the bedroom, living room, etc.
+- Activates high-brightness LEDs for clear visual alerts
+- Designed for placement in important locations such as the bedroom, living room, etc.
 
 ### Wearable Alarm Unit
 - Receives ESP-NOW messages/data from the listener unit
