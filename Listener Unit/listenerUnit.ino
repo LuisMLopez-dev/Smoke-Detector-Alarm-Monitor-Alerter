@@ -5,7 +5,7 @@
 #include <NimBLEDevice.h> // Lightweird alternative to Bluedroid. Uses less flash and RAM
 
 #define ADC_PIN 1 // GPIO 1
-#define SAMPLE_RATE 2000 // 2000 Hz, or 2000 samples per second
+#define SAMPLE_RATE 8000 // 8 kHz, or 8,000 samples a second. This means the Nyquist frequency = 4 kHz, and the LPF before the ADC pin is set to 4.98 kHz, and smoke alarms can be 520 Hz, or about 3 kHz
 #define THRESHOLD 200 // Threshold to determine what is sound or silence. Testing is requried to fine tune it
 
 // Timing Windows, the pulse is about 0.5 seconds, the pause is about 1.5 seconds
