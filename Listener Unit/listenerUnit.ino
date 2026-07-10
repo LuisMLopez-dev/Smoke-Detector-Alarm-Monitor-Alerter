@@ -214,5 +214,4 @@ void loop(){
     Serial.print("Alarm State Sent: "); 
     Serial.println(alarmActive);
   }
-  
 }
