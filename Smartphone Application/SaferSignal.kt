@@ -31,8 +31,7 @@ fun AlarmScreen() {
 
     var alarmState by remember { mutableStateOf(false) }
     val context = LocalContext.current
-
-    // This mimics your updateUI(false) default
+    
     val backgroundColor = if (alarmState) Color.Red else Color.Green
     val statusText = if (alarmState) "SMOKE DETECTED!" else "All Clear"
 
