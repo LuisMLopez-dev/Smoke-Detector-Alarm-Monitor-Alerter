@@ -1,5 +1,5 @@
 # Smoke-Detector-Alarm-Monitor-Alerter
-The program files and firmware for a senior design project on omproving the accessibility for smoke detector alerts are contained here.
+The firmware/software program files for a senior design project on improving the accessibility for smoke detector monitors and alerters are contained here.
 
 ## Overview
 Smoke detectors rely primarily on adubile alerts which can ineffective for individuals who are deaf, hard of hearing, or have varying degrees of hearing loss. The goal of this project is to develop a low-cost, non-invasive, no installation-required alert system that detects smoke alarm patterns and wirelessly communicates to multiple receiver alarm units.
