@@ -1,32 +1,67 @@
-class MainActivity : AppCompatActivity() {
+package com.example.safersignalapp
 
-    private lateinit var statusText: TextView
-    private lateinit var alertBox: View
+import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
+
+class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        statusText = findViewById(R.id.statusText)
-        alertBox = findViewById(R.id.alertBox)
-
-        // Default state
-        updateUI(false)
+        setContent {
+            AlarmScreen()
+        }
     }
+}
 
-    fun updateUI(alarmState: Boolean) {
+@Composable
+fun AlarmScreen() {
+
+    var alarmState by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // This mimics your updateUI(false) default
+    val backgroundColor = if (alarmState) Color.Red else Color.Green
+    val statusText = if (alarmState) "SMOKE DETECTED!" else "All Clear"
+
+    // Trigger vibration when alarm turns ON
+    LaunchedEffect(alarmState) {
         if (alarmState) {
-            statusText.text = "SMOKE DETECTED!"
-            alertBox.setBackgroundColor(Color.RED)
-            vibratePhone()
-        } else {
-            statusText.text = "All Clear"
-            alertBox.setBackgroundColor(Color.GREEN)
+            val vibrator = context.getSystemService(Vibrator::class.java)
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                vibrator?.vibrate(
+                    VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(500)
+            }
         }
     }
 
-    private fun vibratePhone() {
-        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
-        vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = statusText,
+            fontSize = 32.sp,
+            color = Color.White
+        )
     }
 }
