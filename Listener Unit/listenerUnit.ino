@@ -6,7 +6,8 @@
 
 #define ADC_PIN 1 // GPIO 1
 #define SAMPLE_RATE 8000 // 8 kHz, or 8,000 samples a second. This means the Nyquist frequency = 4 kHz, and the LPF before the ADC pin is set to 4.98 kHz, and smoke alarms can be 520 Hz, or about 3 kHz
-#define THRESHOLD 200 // Threshold to determine what is sound or silence. Testing is requried to fine tune it
+#define THRESHOLD_HIGH 220 // Threshold to determine what is sound or silence, must be above this to be sound. Testing is requried to fine tune it
+#define THRESHOLD_LOW 180 // Threshold to determine what is sound or silence, must be below this to be silence. Testing is requried to fine tune it
 
 // Timing Windows, the pulse is about 0.5 seconds, the pause is about 1.5 seconds
 #define PULSE_MIN 300 // 0.3 seconds or 300 ms
@@ -140,9 +141,18 @@ void loop(){
     int sample = analogRead(ADC_PIN); // From the ADC pin, sample the voltage
     int amplitude = abs(sample - 2048); // Eliminates the DC offset and takes the absolute value to obtain only positive values
 
-    // Converts analog signal amplitude into binary based on the threshold, with the states being sound or silence, with sound being on and silence being off
-    currentSoundState = (amplitude > THRESHOLD); // True = on/1, false = off/0
-
+    // Converts analog signal amplitude into binary based on the thresholds, with the states being sound or silence, with sound being on and silence being off
+    // Hysteresis-based sound detection
+    if(currentSoundState){ // If a beep is ongoing at this moment
+      if(amplitude < THRESHOLD_LOW){ // Currently ON, and only turn OFF if we drop below the lower threshold
+        currentSoundState = false; // The current sound is now silence
+      }
+    } 
+    else{ // If there is silence ongoing at this moment
+      if(amplitude > THRESHOLD_HIGH){ // Currently OFF, and only turn ON if we exceed the upper threshold
+        currentSoundState = true; // The current sound is now a beep
+      }
+    }
     // Obtains the current time in milliseconds, to be used as a reference for when there is a change in states, on to off or off to on
     unsigned long currentTime = millis(); 
 
@@ -161,7 +171,7 @@ void loop(){
           pulseCount = 0; // Reset the pulse count given an invalid pulse. Acts as a reset given the period of the incoming signal, and also ensures no false positives
         }
       }
-      // If the last sound state was off, meaning transitoned from off to on, For pauses
+      // If the last sound state was off, meaning transitoned from off to on. For pauses
       else{ 
         // Checks if 3 pulses have occurred given the specific timing windows, and if the duration of the last state fits the the pause timing window
         if(pulseCount == 3 && durationOfLastState > PAUSE_MIN && durationOfLastState < PAUSE_MAX){
