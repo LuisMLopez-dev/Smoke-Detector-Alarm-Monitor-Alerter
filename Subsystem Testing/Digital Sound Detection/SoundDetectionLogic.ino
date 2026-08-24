@@ -34,7 +34,8 @@ void loop(){
       soundState = false;
       Serial.println("OFF");
     }
-  } else {
+  } 
+  else{
     if(amplitude > THRESHOLD_HIGH){
       soundState = true;
       Serial.println("ON");
