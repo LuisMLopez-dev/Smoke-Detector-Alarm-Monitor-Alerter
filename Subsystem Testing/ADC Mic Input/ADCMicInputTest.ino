@@ -2,8 +2,7 @@
   TEST: ADCMicInputTest
 
   PURPOSE:
-  Verify that the MAX9814 microphone module outputs a valid signal
-  and that the ESP32 ADC can read and display it.
+  Verify that the MAX9814 microphone module outputs a valid signal and that the ESP32 ADC can read and display it.
 
   METHOD:
   - Continuously sample ADC
