@@ -29,7 +29,10 @@ Transmits alert status via:
 - Activates a vibration motor to alert the user through haptic feedback
 - Designed to provide immediate personal alerts
 
-### Smartphone Application: WIP!
+### Smartphone Application:
 - Connects to the listener unit via BLE
 - Receives alarm notifications in real time
 - Utilizes vibration and high-priority notifications to alert the user
+
+## Subsystem Testing
+The folder named Subsystem Testing contains the files for the individual subsystems of the listener unit and alarm units broken down into their core tasks. This allows us to test each subsystem to ensure that it works as intended and makes it easier for us to make any changes if needed.
