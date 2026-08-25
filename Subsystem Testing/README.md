@@ -17,4 +17,4 @@ These comments serve to provide a high-level understanding of the sketch and wha
 
 Very few inline comments are used within the code itself because these sketches are intended for functional testing and not for a detailed code explanation. The sketches for the full system have much more comprehensive, line-by-line documentation and explanations for those who want to understand the implementation of the code. 
 
-The sketches are to isolate and validate the subsystem functionality and behavior, not to break down the system architecture. 
+These test sketches are to isolate and validate the subsystems' functionality and behavior, not to break down the system architecture. 
