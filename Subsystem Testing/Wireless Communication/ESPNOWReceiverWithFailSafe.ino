@@ -25,19 +25,19 @@ const unsigned long timeout = 5000;
 
 bool alarmState = false;
 
-typedef struct {
+typedef struct{
   bool alarm;
 } Message;
 
 Message msg;
 
-void onRecv(const esp_now_recv_info*, const uint8_t* data, int len) {
+void onRecv(const esp_now_recv_info*, const uint8_t* data, int len){
   memcpy(&msg, data, sizeof(msg));
   alarmState = msg.alarm;
   lastRecv = millis();
 }
 
-void setup() {
+void setup(){
   Serial.begin(115200);
 
   pinMode(LED_PIN, OUTPUT);
@@ -48,9 +48,9 @@ void setup() {
   esp_now_register_recv_cb(onRecv);
 }
 
-void loop() {
+void loop(){
   // Fail-safe: Trigger alarm if communication is lost
-  if (millis() - lastRecv > timeout) {
+  if (millis() - lastRecv > timeout){
     alarmState = true;
   }
 
