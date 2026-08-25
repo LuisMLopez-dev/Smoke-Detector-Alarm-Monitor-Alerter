@@ -4,7 +4,10 @@
 void setup(){
   Serial.begin(115200); // Baud rate: speed for serial communication
 
+  delay(3000); // Allow Serial Monitor to connect
+
   WiFi.mode(WIFI_STA); // Initialize WiFi hardware
+  delay(100); // Allow WiFi hardware to initialize
 
   Serial.print("MAC Address: ");
   Serial.println(WiFi.macAddress()); //Print MAC Address
