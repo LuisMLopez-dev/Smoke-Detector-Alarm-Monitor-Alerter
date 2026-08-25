@@ -1,4 +1,5 @@
-# Smoke-Detector-Alarm-Monitor-Alerter
+# The Safer Signal
+## A Smoke-Detector-Alarm-Monitor-Alerter
 The firmware/software program files for a senior design project on improving the accessibility for smoke detector monitors and alerters are contained here.
 
 ## Overview
