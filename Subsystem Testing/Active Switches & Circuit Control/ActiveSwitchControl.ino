@@ -2,11 +2,11 @@
   TEST: Controlling a load through an Active Switch (Transistor)
 
   PURPOSE:
-  Verify that the microcontroller can control an active switch, BJT and a MOSFET to drive a load such as an LED or vibration motor.
+  Verify that the microcontroller can control an active switch, BJT and a MOSFET to drive a load such as an LED.
 
   METHOD:
   - Toggle the GPIO output at a fixed interval
-  - Observe the load behavior of the LEDs in the LED array and of the DC vibration puck motor
+  - Observe the load behavior of the LEDs in the LED array
 
   EXPECTED RESULT:
   - Load turns ON when GPIO is HIGH
@@ -16,7 +16,6 @@
   NOTES:
   - For the BJT: GPIO drives base through resistor
   - For the MOSFET: GPIO drives gate through resistor
-  - Ensure that a proper flyback diode is used for inductive loads, such as the vibration motor
 */
 
 #define CONTROL_PIN 4
