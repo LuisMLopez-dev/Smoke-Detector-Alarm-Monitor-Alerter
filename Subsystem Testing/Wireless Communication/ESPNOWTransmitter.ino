@@ -19,7 +19,6 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-// Structure to send
 typedef struct{
   bool alarm;
 } Message;
