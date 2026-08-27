@@ -2,18 +2,19 @@
   TEST: Transmitter; Wireless Communication Type: ESPNOW (Device to Device)
 
   PURPOSE:
-  Verify ESP-NOW data transmission from one ESP32-S3 to another.
+  Verify ESP-NOW data transmission from one ESP32-S3 to multiple receivers.
 
   METHOD:
   - Send alternating true/false every 1 second
+  - Transmit to MCU 2 and MCU 3
   - Monitor serial output for send status
 
   EXPECTED RESULT:
-  - Receiver toggles state accordingly
+  - Both receivers toggle state accordingly
   - Serial monitor shows successful transmission
 
   NOTES:
-  - One-way communication (no response from receiver required)
+  - One-way communication (transmitter → multiple receivers)
 */
 
 #include <WiFi.h>
@@ -25,8 +26,9 @@ typedef struct{
 
 Message msg;
 
-// MAC address of RECEIVER (MCU 2)
-uint8_t receiver[] = {0xE8, 0x3D, 0xC1, 0xF5, 0x10, 0xF8};
+// MAC addresses of RECEIVERS
+uint8_t receiver1[] = {0xE8, 0x3D, 0xC1, 0xF5, 0x10, 0xF8}; // MCU 2
+uint8_t receiver2[] = {0xE8, 0x3D, 0xC1, 0xF5, 0x10, 0x74}; // MCU 3
 
 // Callback to confirm send status
 void onSent(const wifi_tx_info_t *info, esp_now_send_status_t status){
@@ -43,27 +45,35 @@ void onSent(const wifi_tx_info_t *info, esp_now_send_status_t status){
 void setup(){
   Serial.begin(115200);
 
-  // Set device as WiFi station
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();  // improves ESP-NOW reliability
+  WiFi.disconnect();
 
-  // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
 
-  // Register send callback
   esp_now_register_send_cb(onSent);
 
-  // Add receiver as peer
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, receiver, 6);
-  peer.channel = 0;       // use current WiFi channel
-  peer.encrypt = false;   // no encryption
+  // --- Add RECEIVER 1 ---
+  esp_now_peer_info_t peer1 = {};
+  memcpy(peer1.peer_addr, receiver1, 6);
+  peer1.channel = 0;
+  peer1.encrypt = false;
 
-  if (esp_now_add_peer(&peer) != ESP_OK){
-    Serial.println("Failed to add peer");
+  if (esp_now_add_peer(&peer1) != ESP_OK){
+    Serial.println("Failed to add peer1");
+    return;
+  }
+
+  // --- Add RECEIVER 2 ---
+  esp_now_peer_info_t peer2 = {};
+  memcpy(peer2.peer_addr, receiver2, 6);
+  peer2.channel = 0;
+  peer2.encrypt = false;
+
+  if (esp_now_add_peer(&peer2) != ESP_OK){
+    Serial.println("Failed to add peer2");
     return;
   }
 }
@@ -72,8 +82,9 @@ void loop(){
   // Toggle alarm state
   msg.alarm = !msg.alarm;
 
-  // Send message
-  esp_now_send(receiver, (uint8_t*)&msg, sizeof(msg));
+  // Send to both receivers
+  esp_now_send(receiver1, (uint8_t*)&msg, sizeof(msg));
+  esp_now_send(receiver2, (uint8_t*)&msg, sizeof(msg));
 
   // Debug output
   if (msg.alarm == true){
