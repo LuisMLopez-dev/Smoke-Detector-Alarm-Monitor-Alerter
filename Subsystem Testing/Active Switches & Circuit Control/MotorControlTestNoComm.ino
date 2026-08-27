@@ -1,5 +1,5 @@
 /*
-  TEST: Controlling a vibration motor using PWM and a MOSFET as an active switch
+  TEST: Controlling a vibration motor using PWM and a MOSFET as an active switch without any wireless communication
 
   PURPOSE:
   Verify that the ESP32-S3 can reliably control a DC vibration motor using PWM while powered from the +3.3 V rail. This test is to ensure that the motor can:
