@@ -1,0 +1,6 @@
+MAC Address for each MCU:
+
+MCU 1: MAC Address: E8:3D:C1:F5:10:A4
+MCU 2: MAC Address: E8:3D:C1:F5:10:F8
+MCU 3: MAC Address: E8:3D:C1:F5:10:74
+MCU 4: MAC Address: E8:3D:C1:F5:BB:F4
