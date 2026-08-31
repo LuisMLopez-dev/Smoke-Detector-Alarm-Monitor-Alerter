@@ -1,5 +1,5 @@
 /*
-  TEST: ADCMicInputTest
+  TEST: ADC Mic Input Test
 
   PURPOSE:
   Verify that the MAX9814 microphone module outputs a valid signal and that the ESP32 ADC can read and display it.
@@ -9,11 +9,12 @@
   - Print raw and centered amplitude to Serial Plotter
 
   EXPECTED RESULT:
-  - Signal is near midpoint (~2048)
+  - Signal is near midpoint value of about 1400, which was configured based on initial readings from the mcu
   - Audio produces visible waveform variations
 */
 
 #define ADC_PIN 1
+#define ADC_MIDPOINT 1400  // Based on initial readings, the midpoint is at this value
 
 void setup(){
   Serial.begin(115200);
@@ -22,7 +23,7 @@ void setup(){
 
 void loop(){
   int sample = analogRead(ADC_PIN);
-  int amplitude = abs(sample - 2048);
+  int amplitude = abs(sample - ADC_MIDPOINT);
 
   Serial.print(sample);
   Serial.print(",");
