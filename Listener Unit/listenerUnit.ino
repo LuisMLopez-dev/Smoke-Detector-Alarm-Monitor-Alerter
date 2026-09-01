@@ -18,7 +18,7 @@
 #define PAUSE_MIN 1200 // 1.2 seconds or 1200 ms
 #define PAUSE_MAX 2000 // 2.0 seconds or 2000 ms
 
-#define ALARM_HOLD_TIME 4000 // 4.0 seconds or 4000 ms to keep alarm active without new detection
+#define ALARM_HOLD_TIME 8000 // 8.0 seconds or 8000 ms to keep alarm active without new detection
 #define SEND_INTERVAL 200 // 0.2 seconds or 200 ms between transmissions
 
 typedef struct{ //Typedef is used here to make an alias for this struct
