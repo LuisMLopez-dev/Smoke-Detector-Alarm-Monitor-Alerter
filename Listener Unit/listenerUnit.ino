@@ -8,10 +8,13 @@
 #define SAMPLE_RATE 8000 // 8 kHz, or 8,000 samples a second. This means the Nyquist frequency = 4 kHz, and the LPF before the ADC pin is set to 4.98 kHz, and smoke alarms can be 520 Hz, or about 3 kHz
 #define THRESHOLD_HIGH 220 // Threshold to determine what is sound or silence, must be above this to be sound. Testing is requried to fine tune it
 #define THRESHOLD_LOW 180 // Threshold to determine what is sound or silence, must be below this to be silence. Testing is requried to fine tune it
+#define ADC_MIDPOINT 1400 // Midpoint based on measured value from testing
 
 // Timing Windows, the pulse is about 0.5 seconds, the pause is about 1.5 seconds
 #define PULSE_MIN 300 // 0.3 seconds or 300 ms
 #define PULSE_MAX 700 // 0.7 seconds or 700 ms
+#define SHORT_PAUSE_MIN 300 // 0.3 seconds or 300 ms
+#define SHORT_PAUSE_MAX 700 // 0.7 seconds or 700 ms
 #define PAUSE_MIN 1200 // 1.2 seconds or 1200 ms
 #define PAUSE_MAX 2000 // 2.0 seconds or 2000 ms
 
@@ -168,16 +171,29 @@ void loop(){
           Serial.println("Valid Pulse"); // Printing for testing verification
         } 
         else{ // The pulse did not meet that duration and is invalid
-          pulseCount = 0; // Reset the pulse count given an invalid pulse. Acts as a reset given the period of the incoming signal, and also ensures no false positives
+          pulseCount = 0; // Reset the pulse count given an invalid pulse. Acts as a reset given the period of the incoming signal, and also reduces no false positives
         }
       }
       // If the last sound state was off, meaning transitoned from off to on. For pauses
-      else{ 
-        // Checks if 3 pulses have occurred given the specific timing windows, and if the duration of the last state fits the the pause timing window
-        if(pulseCount == 3 && durationOfLastState > PAUSE_MIN && durationOfLastState < PAUSE_MAX){
-          Serial.println("T3 DETECTED"); // Temporal 3 has been detected, and the smoke detector alarm is going off
-          lastT3Time = currentTime; // Record the current time that the T3 was detected
-          pulseCount = 0; // Reset pulse count after successful T3 detection
+      else{       
+        // Short pause time duration check
+        if(pulseCount > 0 && pulseCount < 3){ // If the pulse count is 1 or 2 for the first two pauses
+          if(durationOfLastState > SHORT_PAUSE_MIN && durationOfLastState < SHORT_PAUSE_MAX){ // Ensures that the short pause is of the correct length of time
+            // This is a valid short pause, and it passed this safety check. No action is needed, and continue the sequence
+          } 
+          else{ // The short pause was not of a valid length of time indicating a false T3 pattern
+            pulseCount = 0; // Reset the pulse count and begin the sequence again
+          }
+        }
+      
+        // After 3 pulses (expect LONG pause ~1.5s)
+        else if(pulseCount == 3){
+          if(durationOfLastState > PAUSE_MIN && durationOfLastState < PAUSE_MAX){
+            Serial.println("T3 DETECTED"); // Temporal 3 has been detected
+            lastT3Time = currentTime; // Record detection time
+          }
+      
+          pulseCount = 0; // Reset after evaluating full sequence
         }
       }
     }
