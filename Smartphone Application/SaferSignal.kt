@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.util.UUID
+import android.bluetooth.BluetoothAdapter
 
 const val SAFER_SIGNAL_DEVICE_NAME = "Safer Signal"
 
@@ -81,19 +82,22 @@ class MainActivity : ComponentActivity() {
 
     private fun createNotificationChannel() {
 
-        val channel = NotificationChannel(
-            "safer_signal_alarm",
-            "Safer Signal Emergency Alerts",
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            description = "Emergency smoke alarm notifications"
-            enableVibration(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            val channel = NotificationChannel(
+                "safer_signal_alarm",
+                "Safer Signal Emergency Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Emergency smoke alarm notifications"
+                enableVibration(true)
+            }
+
+            val notificationManager =
+                getSystemService(NotificationManager::class.java)
+
+            notificationManager.createNotificationChannel(channel)
         }
-
-        val notificationManager =
-            getSystemService(NotificationManager::class.java)
-
-        notificationManager.createNotificationChannel(channel)
     }
 }
 
@@ -206,12 +210,14 @@ fun SaferSignalScreen() {
                 300
             )
 
-            vibrator?.vibrate(
-                VibrationEffect.createWaveform(
-                    pattern,
-                    0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(
+                    VibrationEffect.createWaveform(pattern, 0)
                 )
-            )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
 
             showAlarmNotification(context)
 
@@ -224,7 +230,46 @@ fun SaferSignalScreen() {
 
     DisposableEffect(Unit) {
 
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: android.content.Intent?) {
+
+                if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+
+                    val state = intent.getIntExtra(
+                        BluetoothAdapter.EXTRA_STATE,
+                        BluetoothAdapter.ERROR
+                    )
+
+                    when (state) {
+
+                        BluetoothAdapter.STATE_ON -> {
+                            connectionStatus = "Bluetooth ON"
+
+                            if (checkRequiredPermissions(context!!)) {
+                                if (bleClient.hasSavedDevice()) {
+                                    bleClient.connectToSavedDevice()
+                                } else {
+                                    bleClient.scanAndConnect()
+                                }
+                            }
+                        }
+
+                        BluetoothAdapter.STATE_OFF -> {
+                            connectionStatus = "Bluetooth is turned off"
+                        }
+                    }
+                }
+            }
+        }
+
+        val filter = android.content.IntentFilter(
+            BluetoothAdapter.ACTION_STATE_CHANGED
+        )
+
+        context.registerReceiver(receiver, filter)
+
         onDispose {
+            context.unregisterReceiver(receiver)
             bleClient.disconnect()
         }
     }
@@ -529,6 +574,8 @@ class SaferSignalBleClient(
     private var bluetoothGatt:
             BluetoothGatt? = null
 
+    private var isConnected: Boolean = false
+
     fun hasSavedDevice(): Boolean {
 
         return preferences.contains(
@@ -545,11 +592,7 @@ class SaferSignalBleClient(
             )
 
         if (savedAddress == null) {
-
-            onConnectionChange(
-                "Not Paired"
-            )
-
+            onConnectionChange("Not Paired")
             return
         }
 
@@ -560,52 +603,54 @@ class SaferSignalBleClient(
                     savedAddress
                 )
 
-            onConnectionChange(
-                "Reconnecting..."
-            )
+            onConnectionChange("Reconnecting...")
 
-            connectToDevice(
-                device
-            )
+            connectToDevice(device)
+
+            // 🔥 FIXED TIMEOUT CHECK
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({
+
+                    if (!isConnected) {
+
+                        onConnectionChange("Retrying scan...")
+
+                        // 🔥 Give BLE stack time to reset
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            scanAndConnect()
+                        }, 1000)  // 1-second delay
+                    }
+
+                }, 5000)
 
         } catch (e: Exception) {
 
-            onConnectionChange(
-                "Unable to reconnect"
-            )
+            onConnectionChange("Unable to reconnect")
         }
     }
 
     fun scanAndConnect() {
 
         if (!bluetoothAdapter.isEnabled) {
-
-            onConnectionChange(
-                "Bluetooth is turned off"
-            )
-
+            onConnectionChange("Bluetooth is turned off")
             return
         }
 
-        val scanner =
-            bluetoothAdapter.bluetoothLeScanner
+        val scanner = bluetoothAdapter.bluetoothLeScanner
 
         if (scanner == null) {
-
-            onConnectionChange(
-                "BLE scanner unavailable"
-            )
-
+            onConnectionChange("BLE scanner unavailable")
             return
         }
 
-        onConnectionChange(
-            "Searching for Safer Signal..."
-        )
+        // 🔥 CRITICAL FIX: stop any previous scan
+        try {
+            scanner.stopScan(scanCallback)
+        } catch (e: Exception) {}
 
-        scanner.startScan(
-            scanCallback
-        )
+        onConnectionChange("Searching for Safer Signal...")
+
+        scanner.startScan(scanCallback)
     }
 
     private val scanCallback =
@@ -627,8 +672,10 @@ class SaferSignalBleClient(
                     }
 
                 if (
-                    deviceName ==
-                    SAFER_SIGNAL_DEVICE_NAME
+                    device.name == SAFER_SIGNAL_DEVICE_NAME ||
+                    result.scanRecord?.serviceUuids?.contains(
+                        android.os.ParcelUuid(SAFER_SIGNAL_SERVICE_UUID)
+                    ) == true
                 ) {
 
                     bluetoothAdapter
@@ -655,29 +702,30 @@ class SaferSignalBleClient(
                 }
             }
 
-            override fun onScanFailed(
-                errorCode: Int
-            ) {
+            override fun onScanFailed(errorCode: Int) {
 
-                onConnectionChange(
-                    "Bluetooth scan failed"
-                )
+                onConnectionChange("Scan failed ($errorCode), retrying...")
+
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    scanAndConnect()
+                }, 2000)
             }
         }
 
-    private fun connectToDevice(
-        device: BluetoothDevice
-    ) {
+    private fun connectToDevice(device: BluetoothDevice) {
 
-        onConnectionChange(
-            "Connecting..."
-        )
+        onConnectionChange("Connecting...")
+
+        bluetoothGatt?.disconnect()
+        bluetoothGatt?.close()
+        bluetoothGatt = null
 
         bluetoothGatt =
             device.connectGatt(
                 context,
                 false,
-                gattCallback
+                gattCallback,
+                BluetoothDevice.TRANSPORT_LE
             )
     }
 
@@ -690,27 +738,27 @@ class SaferSignalBleClient(
                 newState: Int
             ) {
 
-                if (
-                    newState ==
-                    BluetoothProfile.STATE_CONNECTED
+                if (status == BluetoothGatt.GATT_SUCCESS &&
+                    newState == BluetoothProfile.STATE_CONNECTED
                 ) {
 
-                    onConnectionChange(
-                        "Connected"
-                    )
-
+                    isConnected = true
+                    onConnectionChange("Connected")
                     gatt.discoverServices()
 
-                } else if (
-                    newState ==
-                    BluetoothProfile.STATE_DISCONNECTED
-                ) {
+                } else {
 
-                    onConnectionChange(
-                        "Reconnecting..."
-                    )
+                    // 🔥 Handles BOTH failed connect AND disconnect
+                    isConnected = false
 
-                    connectToSavedDevice()
+                    bluetoothGatt?.close()
+                    bluetoothGatt = null
+
+                    onConnectionChange("Reconnecting...")
+
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        connectToSavedDevice()
+                    }, 1000)
                 }
             }
 
@@ -850,16 +898,10 @@ class SaferSignalBleClient(
     fun disconnect() {
 
         try {
+            bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {}
 
-            bluetoothAdapter
-                .bluetoothLeScanner
-                ?.stopScan(
-                    scanCallback
-                )
-
-        } catch (e: Exception) {
-            // Scanner may not be running
-        }
+        isConnected = false   // 🔥 ADD THIS
 
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
