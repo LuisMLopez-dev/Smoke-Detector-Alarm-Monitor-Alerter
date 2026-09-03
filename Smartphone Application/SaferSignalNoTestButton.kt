@@ -1,6 +1,7 @@
 package com.example.safersignalapp
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,28 +9,18 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,461 +29,262 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
-class MainActivity :
-    ComponentActivity() {
-
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
-        super.onCreate(
-            savedInstanceState
-        )
-
-        setContent {
-            SaferSignalScreen()
-        }
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { SaferSignalScreen() }
     }
 }
 
 @Composable
 fun SaferSignalScreen() {
 
-    val context =
-        LocalContext.current
+    val context = LocalContext.current
 
-    var alarmDetected by remember {
-        mutableStateOf(false)
-    }
+    var alarmDetected by remember { mutableStateOf(false) }
+    var connectionStatus by remember { mutableStateOf("Starting...") }
+    var permissionsReady by remember { mutableStateOf(false) }
 
-    var connectionStatus by remember {
-        mutableStateOf(
-            "Starting..."
-        )
-    }
-
-    var permissionsReady by remember {
-        mutableStateOf(false)
-    }
+    // 🔥 Keep testMode ONLY to protect BLE updates (no button uses it)
+    var testMode by remember { mutableStateOf(false) }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .RequestMultiplePermissions()
+            ActivityResultContracts.RequestMultiplePermissions()
         ) {
-
-            permissionsReady =
-                checkRequiredPermissions(
-                    context
-                )
-
-            if (permissionsReady) {
-                startBleService(
-                    context
-                )
-            }
+            permissionsReady = checkRequiredPermissions(context)
+            if (permissionsReady) startBleService(context)
         }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     DisposableEffect(Unit) {
 
-        val receiver =
-            object :
-                BroadcastReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
 
-                override fun onReceive(
-                    context: Context?,
-                    intent: Intent?
-                ) {
+                if (intent?.action == SaferSignalBleService.ACTION_STATUS) {
 
-                    if (
-                        intent?.action ==
-                        SaferSignalBleService
-                            .ACTION_STATUS
-                    ) {
+                    connectionStatus =
+                        intent.getStringExtra(
+                            SaferSignalBleService.EXTRA_STATUS
+                        ) ?: "Unknown"
 
-                        connectionStatus =
-                            intent.getStringExtra(
-                                SaferSignalBleService
-                                    .EXTRA_STATUS
-                            )
-                                ?: "Unknown"
-
+                    // 🔥 Protect BLE updates if needed later
+                    if (!testMode) {
                         alarmDetected =
                             intent.getBooleanExtra(
-                                SaferSignalBleService
-                                    .EXTRA_ALARM,
+                                SaferSignalBleService.EXTRA_ALARM,
                                 false
                             )
                     }
                 }
             }
+        }
 
-        val filter =
-            IntentFilter(
-                SaferSignalBleService
-                    .ACTION_STATUS
-            )
+        val filter = IntentFilter(SaferSignalBleService.ACTION_STATUS)
 
-        if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.TIRAMISU
-        ) {
-
-            context.registerReceiver(
-                receiver,
-                filter,
-                Context.RECEIVER_NOT_EXPORTED
-            )
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-
             @Suppress("DEPRECATION")
-            context.registerReceiver(
-                receiver,
-                filter
-            )
+            context.registerReceiver(receiver, filter)
         }
 
-        onDispose {
-
-            context.unregisterReceiver(
-                receiver
-            )
-        }
+        onDispose { context.unregisterReceiver(receiver) }
     }
 
     LaunchedEffect(Unit) {
 
-        permissionsReady =
-            checkRequiredPermissions(
-                context
-            )
+        permissionsReady = checkRequiredPermissions(context)
 
         if (permissionsReady) {
-
-            startBleService(
-                context
-            )
-
+            startBleService(context)
         } else {
 
-            val permissions =
-                mutableListOf<String>()
+            val permissions = mutableListOf<String>()
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.S
-            ) {
-
-                permissions.add(
-                    Manifest.permission
-                        .BLUETOOTH_SCAN
-                )
-
-                permissions.add(
-                    Manifest.permission
-                        .BLUETOOTH_CONNECT
-                )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+                permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU
-            ) {
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
 
-                permissions.add(
-                    Manifest.permission
-                        .POST_NOTIFICATIONS
-                )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
 
-            permissionLauncher.launch(
-                permissions.toTypedArray()
-            )
+            permissionLauncher.launch(permissions.toTypedArray())
         }
     }
 
     val backgroundColor =
-        if (alarmDetected) {
-            Color(0xFFC62828)
-        } else {
-            Color(0xFF2E7D32)
-        }
+        if (alarmDetected) Color(0xFFC62828)
+        else Color(0xFF2E7D32)
 
     val statusText =
-        if (alarmDetected) {
-            "SMOKE\nDETECTED!"
-        } else {
-            "ALL CLEAR"
-        }
+        if (alarmDetected) "SMOKE\nDETECTED!"
+        else "ALL CLEAR"
 
     val instructionText =
-        if (alarmDetected) {
-
+        if (alarmDetected)
             "Leave the area and follow your emergency plan."
-
-        } else {
-
+        else
             "Safer Signal is monitoring for a smoke alarm."
-        }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                backgroundColor
-            )
-            .padding(
-                28.dp
-            ),
-
-        horizontalAlignment =
-            Alignment.CenterHorizontally,
-
-        verticalArrangement =
-            Arrangement.Center
+            .background(backgroundColor)
+            .padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
 
         Text(
-            text =
-                "SAFER SIGNAL",
-
-            fontSize =
-                28.sp,
-
-            fontWeight =
-                FontWeight.Bold,
-
-            color =
-                Color.White
+            text = "SAFER SIGNAL",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
         )
 
-        Spacer(
-            modifier =
-                Modifier.height(
-                    30.dp
-                )
-        )
+        Spacer(Modifier.height(30.dp))
 
         Text(
-            text =
-                connectionStatus,
-
-            fontSize =
-                18.sp,
-
-            color =
-                Color.White,
-
-            textAlign =
-                TextAlign.Center
+            text = connectionStatus,
+            fontSize = 18.sp,
+            color = Color.White,
+            textAlign = TextAlign.Center
         )
 
-        Spacer(
-            modifier =
-                Modifier.height(
-                    45.dp
-                )
-        )
+        Spacer(Modifier.height(45.dp))
 
         Text(
-            text =
-                statusText,
-
-            fontSize =
-                52.sp,
-
-            fontWeight =
-                FontWeight.Bold,
-
-            color =
-                Color.White,
-
-            textAlign =
-                TextAlign.Center,
-
-            lineHeight =
-                58.sp
+            text = statusText,
+            fontSize = 52.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            lineHeight = 58.sp
         )
 
-        Spacer(
-            modifier =
-                Modifier.height(
-                    30.dp
-                )
-        )
+        Spacer(Modifier.height(30.dp))
 
         Text(
-            text =
-                instructionText,
-
-            fontSize =
-                22.sp,
-
-            color =
-                Color.White,
-
-            textAlign =
-                TextAlign.Center,
-
-            lineHeight =
-                30.sp
+            text = instructionText,
+            fontSize = 22.sp,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            lineHeight = 30.sp
         )
 
-        Spacer(
-            modifier =
-                Modifier.height(
-                    55.dp
-                )
-        )
+        Spacer(Modifier.height(55.dp))
 
+        // 🔥 ONLY permission button remains (no test button)
         if (!permissionsReady) {
 
             Button(
                 onClick = {
 
-                    val permissions =
-                        mutableListOf<String>()
+                    val permissions = mutableListOf<String>()
 
-                    if (
-                        Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.S
-                    ) {
-
-                        permissions.add(
-                            Manifest.permission
-                                .BLUETOOTH_SCAN
-                        )
-
-                        permissions.add(
-                            Manifest.permission
-                                .BLUETOOTH_CONNECT
-                        )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+                        permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
                     }
 
-                    if (
-                        Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.TIRAMISU
-                    ) {
-
-                        permissions.add(
-                            Manifest.permission
-                                .POST_NOTIFICATIONS
-                        )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        permissions.add(Manifest.permission.POST_NOTIFICATIONS)
                     }
 
-                    permissionLauncher.launch(
-                        permissions.toTypedArray()
-                    )
+                    permissionLauncher.launch(permissions.toTypedArray())
                 },
-
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(
-                            65.dp
-                        ),
-
-                colors =
-                    ButtonDefaults
-                        .buttonColors(
-                            containerColor =
-                                Color.White
-                        )
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(65.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White)
             ) {
 
                 Text(
-                    text =
-                        "Enable Safer Signal",
-
-                    color =
-                        Color.Black,
-
-                    fontSize =
-                        20.sp,
-
-                    fontWeight =
-                        FontWeight.Bold
+                    text = "Enable Safer Signal",
+                    color = Color.Black,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
     }
 }
 
-fun checkRequiredPermissions(
-    context: Context
-): Boolean {
 
-    if (
-        Build.VERSION.SDK_INT >=
-        Build.VERSION_CODES.S
-    ) {
+// =========================
+// PERMISSIONS
+// =========================
+fun checkRequiredPermissions(context: Context): Boolean {
+
+    val fine =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+
+    val coarse =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+    if (fine != PackageManager.PERMISSION_GRANTED ||
+        coarse != PackageManager.PERMISSION_GRANTED
+    ) return false
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
 
         val scan =
-            ContextCompat
-                .checkSelfPermission(
-                    context,
-                    Manifest.permission
-                        .BLUETOOTH_SCAN
-                )
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_SCAN
+            )
 
         val connect =
-            ContextCompat
-                .checkSelfPermission(
-                    context,
-                    Manifest.permission
-                        .BLUETOOTH_CONNECT
-                )
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT
+            )
 
-        if (
-            scan !=
-            PackageManager.PERMISSION_GRANTED ||
-            connect !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-
-            return false
-        }
+        if (scan != PackageManager.PERMISSION_GRANTED ||
+            connect != PackageManager.PERMISSION_GRANTED
+        ) return false
     }
 
-    if (
-        Build.VERSION.SDK_INT >=
-        Build.VERSION_CODES.TIRAMISU
-    ) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
 
         val notifications =
-            ContextCompat
-                .checkSelfPermission(
-                    context,
-                    Manifest.permission
-                        .POST_NOTIFICATIONS
-                )
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            )
 
-        if (
-            notifications !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-
+        if (notifications != PackageManager.PERMISSION_GRANTED)
             return false
-        }
     }
 
     return true
 }
 
-fun startBleService(
-    context: Context
-) {
+
+// =========================
+// BLE SERVICE START
+// =========================
+fun startBleService(context: Context) {
 
     val intent =
-        Intent(
-            context,
-            SaferSignalBleService::class.java
-        )
+        Intent(context, SaferSignalBleService::class.java)
 
-    ContextCompat.startForegroundService(
-        context,
-        intent
-    )
+    ContextCompat.startForegroundService(context, intent)
 }
