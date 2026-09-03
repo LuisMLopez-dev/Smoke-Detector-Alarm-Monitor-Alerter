@@ -89,6 +89,7 @@ fun SaferSignalScreen() {
             }
         }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     DisposableEffect(Unit) {
 
         val receiver =
@@ -122,29 +123,17 @@ fun SaferSignalScreen() {
                 }
             }
 
-        val filter =
-            IntentFilter(
-                SaferSignalBleService.ACTION_STATUS
-            )
+        val filter = IntentFilter(SaferSignalBleService.ACTION_STATUS)
 
-        if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.TIRAMISU
-        ) {
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(
                 receiver,
                 filter,
                 Context.RECEIVER_NOT_EXPORTED
             )
-
         } else {
-
             @Suppress("DEPRECATION")
-            context.registerReceiver(
-                receiver,
-                filter
-            )
+            context.registerReceiver(receiver, filter)
         }
 
         onDispose {
@@ -166,19 +155,14 @@ fun SaferSignalScreen() {
             val permissions =
                 mutableListOf<String>()
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.S
-            ) {
-
-                permissions.add(
-                    Manifest.permission.BLUETOOTH_SCAN
-                )
-
-                permissions.add(
-                    Manifest.permission.BLUETOOTH_CONNECT
-                )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+                permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)  // 🔥 ADD THIS
             }
+
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
 
             if (
                 Build.VERSION.SDK_INT >=
@@ -392,6 +376,26 @@ fun checkRequiredPermissions(
     context: Context
 ): Boolean {
 
+    val location =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+
+    if (location != PackageManager.PERMISSION_GRANTED) {
+        return false
+    }
+
+    val coarse =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+    if (coarse != PackageManager.PERMISSION_GRANTED) {
+        return false
+    }
+
     if (
         Build.VERSION.SDK_INT >=
         Build.VERSION_CODES.S
@@ -473,12 +477,14 @@ fun startTestAlarm(
             300
         )
 
-    vibrator?.vibrate(
-        VibrationEffect.createWaveform(
-            pattern,
-            0
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        vibrator?.vibrate(
+            VibrationEffect.createWaveform(pattern, 0)
         )
-    )
+    } else {
+        @Suppress("DEPRECATION")
+        vibrator?.vibrate(pattern, 0)
+    }
 
     val notification =
         NotificationCompat.Builder(
