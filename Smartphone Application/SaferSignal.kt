@@ -1,24 +1,13 @@
 package com.example.safersignalapp
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -49,228 +38,178 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import java.util.UUID
-import android.bluetooth.BluetoothAdapter
 
-const val SAFER_SIGNAL_DEVICE_NAME = "Safer Signal"
+class MainActivity :
+    ComponentActivity() {
 
-val SAFER_SIGNAL_SERVICE_UUID: UUID =
-    UUID.fromString("12345678-1234-1234-1234-123456789001")
-
-val ALARM_CHARACTERISTIC_UUID: UUID =
-    UUID.fromString("12345678-1234-1234-1234-123456789002")
-
-val CCCD_UUID: UUID =
-    UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
-const val PREFS_NAME = "SaferSignalPrefs"
-const val SAVED_DEVICE_ADDRESS = "savedDeviceAddress"
-
-class MainActivity : ComponentActivity() {
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        createNotificationChannel()
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
+        super.onCreate(
+            savedInstanceState
+        )
 
         setContent {
             SaferSignalScreen()
         }
     }
-
-    private fun createNotificationChannel() {
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            val channel = NotificationChannel(
-                "safer_signal_alarm",
-                "Safer Signal Emergency Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Emergency smoke alarm notifications"
-                enableVibration(true)
-            }
-
-            val notificationManager =
-                getSystemService(NotificationManager::class.java)
-
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
 }
 
-@SuppressLint("MissingPermission")
 @Composable
 fun SaferSignalScreen() {
 
-    val context = LocalContext.current
+    val context =
+        LocalContext.current
 
     var alarmDetected by remember {
         mutableStateOf(false)
     }
 
     var connectionStatus by remember {
-        mutableStateOf("Starting...")
-    }
-
-    var hasSavedDevice by remember {
-        mutableStateOf(false)
-    }
-
-    val bleClient = remember {
-
-        SaferSignalBleClient(
-            context = context,
-
-            onConnectionChange = {
-                connectionStatus = it
-            },
-
-            onAlarmChange = {
-                alarmDetected = it
-            },
-
-            onDeviceSaved = {
-                hasSavedDevice = true
-            }
+        mutableStateOf(
+            "Starting..."
         )
+    }
+
+    var permissionsReady by remember {
+        mutableStateOf(false)
     }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions()
+            ActivityResultContracts
+                .RequestMultiplePermissions()
         ) {
 
-            if (checkRequiredPermissions(context)) {
+            permissionsReady =
+                checkRequiredPermissions(
+                    context
+                )
 
-                if (bleClient.hasSavedDevice()) {
-                    bleClient.connectToSavedDevice()
-                } else {
-                    bleClient.scanAndConnect()
-                }
+            if (permissionsReady) {
+                startBleService(
+                    context
+                )
             }
         }
 
+    DisposableEffect(Unit) {
+
+        val receiver =
+            object :
+                BroadcastReceiver() {
+
+                override fun onReceive(
+                    context: Context?,
+                    intent: Intent?
+                ) {
+
+                    if (
+                        intent?.action ==
+                        SaferSignalBleService
+                            .ACTION_STATUS
+                    ) {
+
+                        connectionStatus =
+                            intent.getStringExtra(
+                                SaferSignalBleService
+                                    .EXTRA_STATUS
+                            )
+                                ?: "Unknown"
+
+                        alarmDetected =
+                            intent.getBooleanExtra(
+                                SaferSignalBleService
+                                    .EXTRA_ALARM,
+                                false
+                            )
+                    }
+                }
+            }
+
+        val filter =
+            IntentFilter(
+                SaferSignalBleService
+                    .ACTION_STATUS
+            )
+
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+
+            context.registerReceiver(
+                receiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            context.registerReceiver(
+                receiver,
+                filter
+            )
+        }
+
+        onDispose {
+
+            context.unregisterReceiver(
+                receiver
+            )
+        }
+    }
+
     LaunchedEffect(Unit) {
 
-        hasSavedDevice =
-            bleClient.hasSavedDevice()
+        permissionsReady =
+            checkRequiredPermissions(
+                context
+            )
 
-        if (checkRequiredPermissions(context)) {
+        if (permissionsReady) {
 
-            if (hasSavedDevice) {
-                bleClient.connectToSavedDevice()
-            } else {
-                connectionStatus = "Not Paired"
-            }
+            startBleService(
+                context
+            )
 
         } else {
 
             val permissions =
                 mutableListOf<String>()
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.S
+            ) {
 
                 permissions.add(
-                    Manifest.permission.BLUETOOTH_SCAN
+                    Manifest.permission
+                        .BLUETOOTH_SCAN
                 )
 
                 permissions.add(
-                    Manifest.permission.BLUETOOTH_CONNECT
+                    Manifest.permission
+                        .BLUETOOTH_CONNECT
                 )
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.TIRAMISU
+            ) {
 
                 permissions.add(
-                    Manifest.permission.POST_NOTIFICATIONS
+                    Manifest.permission
+                        .POST_NOTIFICATIONS
                 )
             }
 
             permissionLauncher.launch(
                 permissions.toTypedArray()
             )
-        }
-    }
-
-    LaunchedEffect(alarmDetected) {
-
-        val vibrator =
-            context.getSystemService(Vibrator::class.java)
-
-        if (alarmDetected) {
-
-            val pattern = longArrayOf(
-                0,
-                800,
-                300,
-                800,
-                300
-            )
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(
-                    VibrationEffect.createWaveform(pattern, 0)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(pattern, 0)
-            }
-
-            showAlarmNotification(context)
-
-        } else {
-
-            vibrator?.cancel()
-            cancelAlarmNotification(context)
-        }
-    }
-
-    DisposableEffect(Unit) {
-
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: android.content.Intent?) {
-
-                if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
-
-                    val state = intent.getIntExtra(
-                        BluetoothAdapter.EXTRA_STATE,
-                        BluetoothAdapter.ERROR
-                    )
-
-                    when (state) {
-
-                        BluetoothAdapter.STATE_ON -> {
-                            connectionStatus = "Bluetooth ON"
-
-                            if (checkRequiredPermissions(context!!)) {
-                                if (bleClient.hasSavedDevice()) {
-                                    bleClient.connectToSavedDevice()
-                                } else {
-                                    bleClient.scanAndConnect()
-                                }
-                            }
-                        }
-
-                        BluetoothAdapter.STATE_OFF -> {
-                            connectionStatus = "Bluetooth is turned off"
-                        }
-                    }
-                }
-            }
-        }
-
-        val filter = android.content.IntentFilter(
-            BluetoothAdapter.ACTION_STATE_CHANGED
-        )
-
-        context.registerReceiver(receiver, filter)
-
-        onDispose {
-            context.unregisterReceiver(receiver)
-            bleClient.disconnect()
         }
     }
 
@@ -290,155 +229,193 @@ fun SaferSignalScreen() {
 
     val instructionText =
         if (alarmDetected) {
+
             "Leave the area and follow your emergency plan."
+
         } else {
+
             "Safer Signal is monitoring for a smoke alarm."
         }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundColor)
-            .padding(28.dp),
+            .background(
+                backgroundColor
+            )
+            .padding(
+                28.dp
+            ),
 
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment =
+            Alignment.CenterHorizontally,
 
-        verticalArrangement = Arrangement.Center
+        verticalArrangement =
+            Arrangement.Center
     ) {
 
         Text(
-            text = "SAFER SIGNAL",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
+            text =
+                "SAFER SIGNAL",
+
+            fontSize =
+                28.sp,
+
+            fontWeight =
+                FontWeight.Bold,
+
+            color =
+                Color.White
         )
 
         Spacer(
-            modifier = Modifier.height(30.dp)
+            modifier =
+                Modifier.height(
+                    30.dp
+                )
         )
 
         Text(
-            text = connectionStatus,
-            fontSize = 18.sp,
-            color = Color.White,
-            textAlign = TextAlign.Center
+            text =
+                connectionStatus,
+
+            fontSize =
+                18.sp,
+
+            color =
+                Color.White,
+
+            textAlign =
+                TextAlign.Center
         )
 
         Spacer(
-            modifier = Modifier.height(45.dp)
+            modifier =
+                Modifier.height(
+                    45.dp
+                )
         )
 
         Text(
-            text = statusText,
-            fontSize = 52.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            lineHeight = 58.sp
+            text =
+                statusText,
+
+            fontSize =
+                52.sp,
+
+            fontWeight =
+                FontWeight.Bold,
+
+            color =
+                Color.White,
+
+            textAlign =
+                TextAlign.Center,
+
+            lineHeight =
+                58.sp
         )
 
         Spacer(
-            modifier = Modifier.height(30.dp)
+            modifier =
+                Modifier.height(
+                    30.dp
+                )
         )
 
         Text(
-            text = instructionText,
-            fontSize = 22.sp,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            lineHeight = 30.sp
+            text =
+                instructionText,
+
+            fontSize =
+                22.sp,
+
+            color =
+                Color.White,
+
+            textAlign =
+                TextAlign.Center,
+
+            lineHeight =
+                30.sp
         )
 
         Spacer(
-            modifier = Modifier.height(55.dp)
+            modifier =
+                Modifier.height(
+                    55.dp
+                )
         )
 
-        if (!hasSavedDevice) {
+        if (!permissionsReady) {
 
             Button(
                 onClick = {
 
-                    if (checkRequiredPermissions(context)) {
+                    val permissions =
+                        mutableListOf<String>()
 
-                        bleClient.scanAndConnect()
+                    if (
+                        Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.S
+                    ) {
 
-                    } else {
+                        permissions.add(
+                            Manifest.permission
+                                .BLUETOOTH_SCAN
+                        )
 
-                        val permissions =
-                            mutableListOf<String>()
-
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-
-                            permissions.add(
-                                Manifest.permission.BLUETOOTH_SCAN
-                            )
-
-                            permissions.add(
-                                Manifest.permission.BLUETOOTH_CONNECT
-                            )
-                        }
-
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-
-                            permissions.add(
-                                Manifest.permission.POST_NOTIFICATIONS
-                            )
-                        }
-
-                        permissionLauncher.launch(
-                            permissions.toTypedArray()
+                        permissions.add(
+                            Manifest.permission
+                                .BLUETOOTH_CONNECT
                         )
                     }
+
+                    if (
+                        Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.TIRAMISU
+                    ) {
+
+                        permissions.add(
+                            Manifest.permission
+                                .POST_NOTIFICATIONS
+                        )
+                    }
+
+                    permissionLauncher.launch(
+                        permissions.toTypedArray()
+                    )
                 },
 
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(65.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(
+                            65.dp
+                        ),
 
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White
-                )
+                colors =
+                    ButtonDefaults
+                        .buttonColors(
+                            containerColor =
+                                Color.White
+                        )
             ) {
 
                 Text(
-                    text = "Connect Safer Signal",
-                    color = Color.Black,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                    text =
+                        "Enable Safer Signal",
+
+                    color =
+                        Color.Black,
+
+                    fontSize =
+                        20.sp,
+
+                    fontWeight =
+                        FontWeight.Bold
                 )
             }
-
-            Spacer(
-                modifier = Modifier.height(20.dp)
-            )
-        }
-
-        Button(
-            onClick = {
-                alarmDetected = !alarmDetected
-            },
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(65.dp),
-
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.White
-            )
-        ) {
-
-            Text(
-                text =
-                    if (alarmDetected) {
-                        "Stop Test Alarm"
-                    } else {
-                        "Test Alarm"
-                    },
-
-                color = Color.Black,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
         }
     }
 }
@@ -447,39 +424,56 @@ fun checkRequiredPermissions(
     context: Context
 ): Boolean {
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    if (
+        Build.VERSION.SDK_INT >=
+        Build.VERSION_CODES.S
+    ) {
 
-        val scanPermission =
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_SCAN
-            )
+        val scan =
+            ContextCompat
+                .checkSelfPermission(
+                    context,
+                    Manifest.permission
+                        .BLUETOOTH_SCAN
+                )
 
-        val connectPermission =
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_CONNECT
-            )
+        val connect =
+            ContextCompat
+                .checkSelfPermission(
+                    context,
+                    Manifest.permission
+                        .BLUETOOTH_CONNECT
+                )
 
         if (
-            scanPermission != PackageManager.PERMISSION_GRANTED ||
-            connectPermission != PackageManager.PERMISSION_GRANTED
+            scan !=
+            PackageManager.PERMISSION_GRANTED ||
+            connect !=
+            PackageManager.PERMISSION_GRANTED
         ) {
+
             return false
         }
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    if (
+        Build.VERSION.SDK_INT >=
+        Build.VERSION_CODES.TIRAMISU
+    ) {
 
-        val notificationPermission =
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            )
+        val notifications =
+            ContextCompat
+                .checkSelfPermission(
+                    context,
+                    Manifest.permission
+                        .POST_NOTIFICATIONS
+                )
 
         if (
-            notificationPermission != PackageManager.PERMISSION_GRANTED
+            notifications !=
+            PackageManager.PERMISSION_GRANTED
         ) {
+
             return false
         }
     }
@@ -487,424 +481,18 @@ fun checkRequiredPermissions(
     return true
 }
 
-@SuppressLint("MissingPermission")
-fun showAlarmNotification(
+fun startBleService(
     context: Context
 ) {
 
-    val notification =
-        NotificationCompat.Builder(
+    val intent =
+        Intent(
             context,
-            "safer_signal_alarm"
-        )
-            .setSmallIcon(
-                android.R.drawable.ic_dialog_alert
-            )
-            .setContentTitle(
-                "SAFER SIGNAL"
-            )
-            .setContentText(
-                "Smoke alarm detected! Leave the area immediately."
-            )
-            .setPriority(
-                NotificationCompat.PRIORITY_MAX
-            )
-            .setCategory(
-                NotificationCompat.CATEGORY_ALARM
-            )
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .build()
-
-    val notificationManager =
-        context.getSystemService(
-            NotificationManager::class.java
+            SaferSignalBleService::class.java
         )
 
-    notificationManager.notify(
-        1001,
-        notification
+    ContextCompat.startForegroundService(
+        context,
+        intent
     )
-}
-
-fun cancelAlarmNotification(
-    context: Context
-) {
-
-    val notificationManager =
-        context.getSystemService(
-            NotificationManager::class.java
-        )
-
-    notificationManager.cancel(
-        1001
-    )
-}
-
-@SuppressLint("MissingPermission")
-class SaferSignalBleClient(
-
-    private val context: Context,
-
-    private val onConnectionChange:
-        (String) -> Unit,
-
-    private val onAlarmChange:
-        (Boolean) -> Unit,
-
-    private val onDeviceSaved:
-        () -> Unit
-
-) {
-
-    private val bluetoothManager =
-        context.getSystemService(
-            BluetoothManager::class.java
-        )
-
-    private val bluetoothAdapter =
-        bluetoothManager.adapter
-
-    private val preferences =
-        context.getSharedPreferences(
-            PREFS_NAME,
-            Context.MODE_PRIVATE
-        )
-
-    private var bluetoothGatt:
-            BluetoothGatt? = null
-
-    private var isConnected: Boolean = false
-
-    fun hasSavedDevice(): Boolean {
-
-        return preferences.contains(
-            SAVED_DEVICE_ADDRESS
-        )
-    }
-
-    fun connectToSavedDevice() {
-
-        val savedAddress =
-            preferences.getString(
-                SAVED_DEVICE_ADDRESS,
-                null
-            )
-
-        if (savedAddress == null) {
-            onConnectionChange("Not Paired")
-            return
-        }
-
-        try {
-
-            val device =
-                bluetoothAdapter.getRemoteDevice(
-                    savedAddress
-                )
-
-            onConnectionChange("Reconnecting...")
-
-            connectToDevice(device)
-
-            // 🔥 FIXED TIMEOUT CHECK
-            android.os.Handler(android.os.Looper.getMainLooper())
-                .postDelayed({
-
-                    if (!isConnected) {
-
-                        onConnectionChange("Retrying scan...")
-
-                        // 🔥 Give BLE stack time to reset
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            scanAndConnect()
-                        }, 1000)  // 1-second delay
-                    }
-
-                }, 5000)
-
-        } catch (e: Exception) {
-
-            onConnectionChange("Unable to reconnect")
-        }
-    }
-
-    fun scanAndConnect() {
-
-        if (!bluetoothAdapter.isEnabled) {
-            onConnectionChange("Bluetooth is turned off")
-            return
-        }
-
-        val scanner = bluetoothAdapter.bluetoothLeScanner
-
-        if (scanner == null) {
-            onConnectionChange("BLE scanner unavailable")
-            return
-        }
-
-        // 🔥 CRITICAL FIX: stop any previous scan
-        try {
-            scanner.stopScan(scanCallback)
-        } catch (e: Exception) {}
-
-        onConnectionChange("Searching for Safer Signal...")
-
-        scanner.startScan(scanCallback)
-    }
-
-    private val scanCallback =
-        object : ScanCallback() {
-
-            override fun onScanResult(
-                callbackType: Int,
-                result: ScanResult
-            ) {
-
-                val device =
-                    result.device
-
-                val deviceName =
-                    try {
-                        device.name
-                    } catch (e: SecurityException) {
-                        null
-                    }
-
-                if (
-                    device.name == SAFER_SIGNAL_DEVICE_NAME ||
-                    result.scanRecord?.serviceUuids?.contains(
-                        android.os.ParcelUuid(SAFER_SIGNAL_SERVICE_UUID)
-                    ) == true
-                ) {
-
-                    bluetoothAdapter
-                        .bluetoothLeScanner
-                        ?.stopScan(this)
-
-                    preferences
-                        .edit()
-                        .putString(
-                            SAVED_DEVICE_ADDRESS,
-                            device.address
-                        )
-                        .apply()
-
-                    onDeviceSaved()
-
-                    onConnectionChange(
-                        "Safer Signal found"
-                    )
-
-                    connectToDevice(
-                        device
-                    )
-                }
-            }
-
-            override fun onScanFailed(errorCode: Int) {
-
-                onConnectionChange("Scan failed ($errorCode), retrying...")
-
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    scanAndConnect()
-                }, 2000)
-            }
-        }
-
-    private fun connectToDevice(device: BluetoothDevice) {
-
-        onConnectionChange("Connecting...")
-
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
-        bluetoothGatt = null
-
-        bluetoothGatt =
-            device.connectGatt(
-                context,
-                false,
-                gattCallback,
-                BluetoothDevice.TRANSPORT_LE
-            )
-    }
-
-    private val gattCallback =
-        object : BluetoothGattCallback() {
-
-            override fun onConnectionStateChange(
-                gatt: BluetoothGatt,
-                status: Int,
-                newState: Int
-            ) {
-
-                if (status == BluetoothGatt.GATT_SUCCESS &&
-                    newState == BluetoothProfile.STATE_CONNECTED
-                ) {
-
-                    isConnected = true
-                    onConnectionChange("Connected")
-                    gatt.discoverServices()
-
-                } else {
-
-                    // 🔥 Handles BOTH failed connect AND disconnect
-                    isConnected = false
-
-                    bluetoothGatt?.close()
-                    bluetoothGatt = null
-
-                    onConnectionChange("Reconnecting...")
-
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        connectToSavedDevice()
-                    }, 1000)
-                }
-            }
-
-            override fun onServicesDiscovered(
-                gatt: BluetoothGatt,
-                status: Int
-            ) {
-
-                val service =
-                    gatt.getService(
-                        SAFER_SIGNAL_SERVICE_UUID
-                    )
-
-                val characteristic =
-                    service?.getCharacteristic(
-                        ALARM_CHARACTERISTIC_UUID
-                    )
-
-                if (
-                    characteristic != null
-                ) {
-
-                    enableAlarmNotifications(
-                        gatt,
-                        characteristic
-                    )
-
-                    onConnectionChange(
-                        "Connected and Monitoring"
-                    )
-
-                } else {
-
-                    onConnectionChange(
-                        "Alarm service not found"
-                    )
-                }
-            }
-
-            @Deprecated(
-                "Used for compatibility"
-            )
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic:
-                BluetoothGattCharacteristic
-            ) {
-
-                if (
-                    characteristic.uuid ==
-                    ALARM_CHARACTERISTIC_UUID
-                ) {
-
-                    processAlarmValue(
-                        characteristic.value
-                    )
-                }
-            }
-
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic:
-                BluetoothGattCharacteristic,
-                value: ByteArray
-            ) {
-
-                if (
-                    characteristic.uuid ==
-                    ALARM_CHARACTERISTIC_UUID
-                ) {
-
-                    processAlarmValue(
-                        value
-                    )
-                }
-            }
-        }
-
-    private fun enableAlarmNotifications(
-        gatt: BluetoothGatt,
-        characteristic:
-        BluetoothGattCharacteristic
-    ) {
-
-        gatt.setCharacteristicNotification(
-            characteristic,
-            true
-        )
-
-        val descriptor =
-            characteristic.getDescriptor(
-                CCCD_UUID
-            )
-
-        if (descriptor != null) {
-
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU
-            ) {
-
-                gatt.writeDescriptor(
-                    descriptor,
-                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                )
-
-            } else {
-
-                @Suppress("DEPRECATION")
-                descriptor.value =
-                    BluetoothGattDescriptor
-                        .ENABLE_NOTIFICATION_VALUE
-
-                @Suppress("DEPRECATION")
-                gatt.writeDescriptor(
-                    descriptor
-                )
-            }
-        }
-    }
-
-    private fun processAlarmValue(
-        value: ByteArray
-    ) {
-
-        if (value.isNotEmpty()) {
-
-            val alarmActive =
-                value[0].toInt() == 1
-
-            onAlarmChange(
-                alarmActive
-            )
-        }
-    }
-
-    fun disconnect() {
-
-        try {
-            bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
-        } catch (e: Exception) {}
-
-        isConnected = false   // 🔥 ADD THIS
-
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
-        bluetoothGatt = null
-    }
 }
