@@ -123,41 +123,31 @@ class SaferSignalBleService : Service() {
 
     private fun createNotificationChannels() {
 
-        val notificationManager =
-            getSystemService(
-                NotificationManager::class.java
-            )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
-        val monitoringChannel =
-            NotificationChannel(
+            val notificationManager =
+                getSystemService(NotificationManager::class.java)
+
+            val monitoringChannel = NotificationChannel(
                 SERVICE_CHANNEL_ID,
                 "Safer Signal Monitoring",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description =
-                    "Keeps Safer Signal connected and monitoring."
+                description = "Keeps Safer Signal connected and monitoring."
             }
 
-        notificationManager.createNotificationChannel(
-            monitoringChannel
-        )
-
-        val alarmChannel =
-            NotificationChannel(
+            val alarmChannel = NotificationChannel(
                 ALARM_CHANNEL_ID,
                 "Safer Signal Emergency Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-
-                description =
-                    "Emergency smoke alarm notifications"
-
+                description = "Emergency smoke alarm notifications"
                 enableVibration(true)
             }
 
-        notificationManager.createNotificationChannel(
-            alarmChannel
-        )
+            notificationManager.createNotificationChannel(monitoringChannel)
+            notificationManager.createNotificationChannel(alarmChannel)
+        }
     }
 
     private fun buildMonitoringNotification(
@@ -277,41 +267,38 @@ class SaferSignalBleService : Service() {
     @SuppressLint("MissingPermission")
     private fun startScan() {
 
-        val adapter =
-            bluetoothManager.adapter
+        val adapter = bluetoothManager.adapter
 
         if (!adapter.isEnabled) {
-
-            updateStatus(
-                "Bluetooth is turned off"
-            )
-
+            updateStatus("Bluetooth is turned off")
             scheduleReconnect()
-
             return
         }
 
-        val scanner =
-            adapter.bluetoothLeScanner
+        val scanner = adapter.bluetoothLeScanner
 
         if (scanner == null) {
-
-            updateStatus(
-                "BLE scanner unavailable"
-            )
-
+            updateStatus("BLE scanner unavailable")
             scheduleReconnect()
-
             return
         }
 
-        updateStatus(
-            "Searching for Safer Signal..."
-        )
+        // 🔥 IMPORTANT: stop any previous scan first
+        try {
+            scanner.stopScan(scanCallback)
+        } catch (e: Exception) {}
 
-        scanner.startScan(
-            scanCallback
-        )
+        updateStatus("Searching for Safer Signal...")
+
+        // 🔥 Small delay helps Android BLE stabilize
+        handler.postDelayed({
+            try {
+                scanner.startScan(scanCallback)
+            } catch (e: Exception) {
+                updateStatus("Scan restart failed")
+                scheduleReconnect()
+            }
+        }, 300)
     }
 
     private val scanCallback =
@@ -323,20 +310,19 @@ class SaferSignalBleService : Service() {
                 result: ScanResult
             ) {
 
-                val device =
-                    result.device
+                val device = result.device
 
-                val name =
-                    try {
-                        device.name
-                    } catch (e: SecurityException) {
-                        null
-                    }
+                val name = try {
+                    device.name
+                } catch (e: SecurityException) {
+                    null
+                }
 
-                if (
-                    name ==
-                    SAFER_SIGNAL_DEVICE_NAME
-                ) {
+                val isMatch =
+                    name?.equals(SAFER_SIGNAL_DEVICE_NAME, ignoreCase = true) == true ||
+                            result.device.address == "E8:3D:C1:F5:10:A5"
+
+                if (isMatch) {
 
                     bluetoothManager.adapter
                         .bluetoothLeScanner
@@ -353,25 +339,20 @@ class SaferSignalBleService : Service() {
                         )
                         .apply()
 
-                    updateStatus(
-                        "Safer Signal found"
-                    )
+                    updateStatus("Safer Signal found")
 
-                    connectToDevice(
-                        device
-                    )
+                    connectToDevice(device)
                 }
             }
 
-            override fun onScanFailed(
-                errorCode: Int
-            ) {
+            override fun onScanFailed(errorCode: Int) {
 
-                updateStatus(
-                    "Bluetooth scan failed"
-                )
+                updateStatus("Scan failed: $errorCode")
 
-                scheduleReconnect()
+                // 🔥 Force full restart instead of just waiting
+                handler.postDelayed({
+                    startScan()
+                }, 1000)
             }
         }
 
@@ -598,21 +579,28 @@ class SaferSignalBleService : Service() {
                 Vibrator::class.java
             )
 
-        val pattern =
-            longArrayOf(
-                0,
-                800,
-                300,
-                800,
-                300
-            )
-
-        vibrator?.vibrate(
-            VibrationEffect.createWaveform(
-                pattern,
-                0
-            )
+        val pattern = longArrayOf(
+            0,
+            1200,
+            200,
+            1200,
+            200,
+            1200
         )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(
+                    VibrationEffect.createWaveform(pattern, 0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator?.vibrate(pattern, 0)
+        }
 
         val notification =
             NotificationCompat.Builder(
@@ -680,21 +668,13 @@ class SaferSignalBleService : Service() {
             handler.removeCallbacks(it)
         }
 
-        reconnectRunnable =
-            Runnable {
-
-                if (
-                    hasBluetoothPermissions()
-                ) {
-
-                    connectAutomatically()
-                }
+        reconnectRunnable = Runnable {
+            if (hasBluetoothPermissions()) {
+                startScan()   // 🔥 force scan instead of connectAutomatically
             }
+        }
 
-        handler.postDelayed(
-            reconnectRunnable!!,
-            5000
-        )
+        handler.postDelayed(reconnectRunnable!!, 5000)
     }
 
     private fun updateStatus(
