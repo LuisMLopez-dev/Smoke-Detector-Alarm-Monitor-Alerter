@@ -21,13 +21,21 @@ void setup(){
   analogReadResolution(12);
 }
 
+#define SAMPLE_RATE 8000  // 8 kHz target
+#define SAMPLE_PERIOD_US (1000000 / SAMPLE_RATE)
+
 void loop(){
-  int sample = analogRead(ADC_PIN);
-  int amplitude = abs(sample - ADC_MIDPOINT);
+  static unsigned long lastSampleTime = 0;
+  unsigned long now = micros();
 
-  Serial.print(sample);
-  Serial.print(",");
-  Serial.println(amplitude);
+  if (now - lastSampleTime >= SAMPLE_PERIOD_US){
+    lastSampleTime = now;
 
-  delay(1); // ~1 kHz sampling for plotting
+    int sample = analogRead(ADC_PIN);
+    int amplitude = abs(sample - ADC_MIDPOINT);
+
+    Serial.print(sample);
+    Serial.print(",");
+    Serial.println(amplitude);
+  }
 }
