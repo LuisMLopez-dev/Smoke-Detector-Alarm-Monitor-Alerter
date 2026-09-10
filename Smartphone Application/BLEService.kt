@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -14,8 +15,10 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -30,6 +33,7 @@ import java.util.UUID
 class SaferSignalBleService : Service() {
 
     companion object {
+
         const val SERVICE_CHANNEL_ID = "safer_signal_monitor"
         const val ALARM_CHANNEL_ID = "safer_signal_alarm"
 
@@ -60,25 +64,105 @@ class SaferSignalBleService : Service() {
             "com.example.safersignalapp.STATUS"
 
         const val EXTRA_STATUS = "status"
-
         const val EXTRA_ALARM = "alarm"
     }
+
+    private lateinit var bluetoothManager: BluetoothManager
 
     private val handler =
         Handler(Looper.getMainLooper())
 
-    private lateinit var bluetoothManager:
-            BluetoothManager
+    private var bluetoothGatt: BluetoothGatt? = null
 
-    private var bluetoothGatt:
-            BluetoothGatt? = null
+    private var reconnectRunnable: Runnable? = null
 
-    private var reconnectRunnable:
-            Runnable? = null
+    private var isScanning = false
+    private var isConnecting = false
+    private var isConnected = false
 
     private var alarmActive = false
 
+    // ----------------------------------------------------
+    // Bluetooth ON/OFF receiver
+    // ----------------------------------------------------
+
+    private val bluetoothStateReceiver =
+        object : BroadcastReceiver() {
+
+            override fun onReceive(
+                context: Context?,
+                intent: Intent?
+            ) {
+
+                if (
+                    intent?.action ==
+                    BluetoothAdapter.ACTION_STATE_CHANGED
+                ) {
+
+                    val state =
+                        intent.getIntExtra(
+                            BluetoothAdapter.EXTRA_STATE,
+                            BluetoothAdapter.ERROR
+                        )
+
+                    when (state) {
+
+                        BluetoothAdapter.STATE_OFF -> {
+
+                            cancelReconnect()
+
+                            stopBleScan()
+
+                            isConnecting = false
+                            isConnected = false
+
+                            updateStatus(
+                                "Bluetooth is turned off"
+                            )
+                        }
+
+                        BluetoothAdapter.STATE_TURNING_OFF -> {
+
+                            updateStatus(
+                                "Bluetooth is turning off..."
+                            )
+                        }
+
+                        BluetoothAdapter.STATE_TURNING_ON -> {
+
+                            updateStatus(
+                                "Bluetooth is turning on..."
+                            )
+                        }
+
+                        BluetoothAdapter.STATE_ON -> {
+
+                            updateStatus(
+                                "Bluetooth on - reconnecting..."
+                            )
+
+                            /*
+                             * Small delay gives the Android
+                             * Bluetooth stack time to become ready.
+                             */
+                            handler.postDelayed(
+                                {
+                                    connectAutomatically()
+                                },
+                                1000
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    // ----------------------------------------------------
+    // Service startup
+    // ----------------------------------------------------
+
     override fun onCreate() {
+
         super.onCreate()
 
         bluetoothManager =
@@ -87,6 +171,8 @@ class SaferSignalBleService : Service() {
             )
 
         createNotificationChannels()
+
+        registerBluetoothReceiver()
 
         startForeground(
             SERVICE_NOTIFICATION_ID,
@@ -112,42 +198,102 @@ class SaferSignalBleService : Service() {
             return START_STICKY
         }
 
-        connectAutomatically()
+        /*
+         * Prevent starting another connection
+         * if we are already connected or connecting.
+         */
+        if (
+            !isConnected &&
+            !isConnecting
+        ) {
+
+            connectAutomatically()
+        }
 
         return START_STICKY
     }
 
     override fun onBind(
         intent: Intent?
-    ): IBinder? = null
+    ): IBinder? {
+
+        return null
+    }
+
+    // ----------------------------------------------------
+    // Register Bluetooth state receiver
+    // ----------------------------------------------------
+
+    private fun registerBluetoothReceiver() {
+
+        val filter =
+            IntentFilter(
+                BluetoothAdapter.ACTION_STATE_CHANGED
+            )
+
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+
+            registerReceiver(
+                bluetoothStateReceiver,
+                filter,
+                Context.RECEIVER_EXPORTED
+            )
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            registerReceiver(
+                bluetoothStateReceiver,
+                filter
+            )
+        }
+    }
+
+    // ----------------------------------------------------
+    // Notification channels
+    // ----------------------------------------------------
 
     private fun createNotificationChannels() {
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager =
+            getSystemService(
+                NotificationManager::class.java
+            )
 
-            val notificationManager =
-                getSystemService(NotificationManager::class.java)
-
-            val monitoringChannel = NotificationChannel(
+        val monitoringChannel =
+            NotificationChannel(
                 SERVICE_CHANNEL_ID,
                 "Safer Signal Monitoring",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps Safer Signal connected and monitoring."
+
+                description =
+                    "Keeps Safer Signal connected and monitoring."
             }
 
-            val alarmChannel = NotificationChannel(
+        manager.createNotificationChannel(
+            monitoringChannel
+        )
+
+        val alarmChannel =
+            NotificationChannel(
                 ALARM_CHANNEL_ID,
                 "Safer Signal Emergency Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Emergency smoke alarm notifications"
+
+                description =
+                    "Emergency smoke alarm notifications"
+
                 enableVibration(true)
             }
 
-            notificationManager.createNotificationChannel(monitoringChannel)
-            notificationManager.createNotificationChannel(alarmChannel)
-        }
+        manager.createNotificationChannel(
+            alarmChannel
+        )
     }
 
     private fun buildMonitoringNotification(
@@ -184,12 +330,17 @@ class SaferSignalBleService : Service() {
 
         manager.notify(
             SERVICE_NOTIFICATION_ID,
-            buildMonitoringNotification(message)
+            buildMonitoringNotification(
+                message
+            )
         )
     }
 
-    private fun hasBluetoothPermissions():
-            Boolean {
+    // ----------------------------------------------------
+    // Permissions
+    // ----------------------------------------------------
+
+    private fun hasBluetoothPermissions(): Boolean {
 
         if (
             Build.VERSION.SDK_INT >=
@@ -220,8 +371,47 @@ class SaferSignalBleService : Service() {
         return true
     }
 
+    // ----------------------------------------------------
+    // Automatic connection
+    // ----------------------------------------------------
+
     @SuppressLint("MissingPermission")
     private fun connectAutomatically() {
+
+        if (!hasBluetoothPermissions()) {
+
+            updateStatus(
+                "Bluetooth permission required"
+            )
+
+            return
+        }
+
+        val adapter =
+            bluetoothManager.adapter
+
+        if (!adapter.isEnabled) {
+
+            /*
+             * Do NOT keep retrying here.
+             * The Bluetooth state receiver will tell us
+             * when Bluetooth is turned back on.
+             */
+
+            updateStatus(
+                "Bluetooth is turned off"
+            )
+
+            return
+        }
+
+        if (
+            isConnected ||
+            isConnecting
+        ) {
+
+            return
+        }
 
         val preferences =
             getSharedPreferences(
@@ -240,10 +430,9 @@ class SaferSignalBleService : Service() {
             try {
 
                 val device =
-                    bluetoothManager.adapter
-                        .getRemoteDevice(
-                            savedAddress
-                        )
+                    adapter.getRemoteDevice(
+                        savedAddress
+                    )
 
                 updateStatus(
                     "Reconnecting..."
@@ -255,50 +444,70 @@ class SaferSignalBleService : Service() {
 
             } catch (e: Exception) {
 
+                /*
+                 * If saved address cannot be used,
+                 * fall back to scanning.
+                 */
+
                 startScan()
             }
 
         } else {
 
+            /*
+             * First time setup.
+             */
+
             startScan()
         }
     }
 
+    // ----------------------------------------------------
+    // BLE scan
+    // ----------------------------------------------------
+
     @SuppressLint("MissingPermission")
     private fun startScan() {
 
-        val adapter = bluetoothManager.adapter
+        if (isScanning) {
+            return
+        }
+
+        val adapter =
+            bluetoothManager.adapter
 
         if (!adapter.isEnabled) {
-            updateStatus("Bluetooth is turned off")
-            scheduleReconnect()
+
+            updateStatus(
+                "Bluetooth is turned off"
+            )
+
             return
         }
 
-        val scanner = adapter.bluetoothLeScanner
+        val scanner =
+            adapter.bluetoothLeScanner
 
         if (scanner == null) {
-            updateStatus("BLE scanner unavailable")
+
+            updateStatus(
+                "BLE scanner unavailable"
+            )
+
             scheduleReconnect()
+
             return
         }
 
-        // 🔥 IMPORTANT: stop any previous scan first
-        try {
-            scanner.stopScan(scanCallback)
-        } catch (e: Exception) {}
+        updateStatus(
+            "Searching for Safer Signal..."
+        )
 
-        updateStatus("Searching for Safer Signal...")
+        isScanning = true
 
-        // 🔥 Small delay helps Android BLE stabilize
-        handler.postDelayed({
-            try {
-                scanner.startScan(scanCallback)
-            } catch (e: Exception) {
-                updateStatus("Scan restart failed")
-                scheduleReconnect()
-            }
-        }, 300)
+        scanner.startScan(
+            scanCallback
+        )
     }
 
     private val scanCallback =
@@ -310,23 +519,32 @@ class SaferSignalBleService : Service() {
                 result: ScanResult
             ) {
 
-                val device = result.device
+                val device =
+                    result.device
 
-                val name = try {
-                    device.name
-                } catch (e: SecurityException) {
-                    null
-                }
+                val deviceName =
+                    try {
 
-                val isMatch =
-                    name?.equals(SAFER_SIGNAL_DEVICE_NAME, ignoreCase = true) == true ||
-                            result.device.address == "E8:3D:C1:F5:10:A5"
+                        device.name
 
-                if (isMatch) {
+                    } catch (
+                        e: SecurityException
+                    ) {
 
-                    bluetoothManager.adapter
-                        .bluetoothLeScanner
-                        ?.stopScan(this)
+                        null
+                    }
+
+                if (
+                    deviceName ==
+                    SAFER_SIGNAL_DEVICE_NAME
+                ) {
+
+                    stopBleScan()
+
+                    /*
+                     * Save this specific ESP32.
+                     * User only needs initial setup once.
+                     */
 
                     getSharedPreferences(
                         PREFS_NAME,
@@ -339,32 +557,90 @@ class SaferSignalBleService : Service() {
                         )
                         .apply()
 
-                    updateStatus("Safer Signal found")
+                    updateStatus(
+                        "Safer Signal found"
+                    )
 
-                    connectToDevice(device)
+                    connectToDevice(
+                        device
+                    )
                 }
             }
 
-            override fun onScanFailed(errorCode: Int) {
+            override fun onScanFailed(
+                errorCode: Int
+            ) {
 
-                updateStatus("Scan failed: $errorCode")
+                isScanning = false
 
-                // 🔥 Force full restart instead of just waiting
-                handler.postDelayed({
-                    startScan()
-                }, 1000)
+                updateStatus(
+                    "Bluetooth scan failed"
+                )
+
+                scheduleReconnect()
             }
         }
+
+    @SuppressLint("MissingPermission")
+    private fun stopBleScan() {
+
+        if (!isScanning) {
+            return
+        }
+
+        try {
+
+            bluetoothManager.adapter
+                .bluetoothLeScanner
+                ?.stopScan(
+                    scanCallback
+                )
+
+        } catch (
+            e: Exception
+        ) {
+
+            // Scanner may already be stopped.
+        }
+
+        isScanning = false
+    }
+
+    // ----------------------------------------------------
+    // Connect to ESP32
+    // ----------------------------------------------------
 
     @SuppressLint("MissingPermission")
     private fun connectToDevice(
         device: BluetoothDevice
     ) {
 
-        bluetoothGatt?.close()
+        if (
+            isConnecting ||
+            isConnected
+        ) {
 
-        bluetoothGatt =
-            null
+            return
+        }
+
+        stopBleScan()
+
+        cancelReconnect()
+
+        try {
+
+            bluetoothGatt?.close()
+
+        } catch (
+            e: Exception
+        ) {
+
+        }
+
+        bluetoothGatt = null
+
+        isConnecting = true
+        isConnected = false
 
         updateStatus(
             "Connecting..."
@@ -378,9 +654,12 @@ class SaferSignalBleService : Service() {
             )
     }
 
+    // ----------------------------------------------------
+    // GATT callback
+    // ----------------------------------------------------
+
     private val gattCallback =
-        object :
-            BluetoothGattCallback() {
+        object : BluetoothGattCallback() {
 
             @SuppressLint("MissingPermission")
             override fun onConnectionStateChange(
@@ -394,6 +673,11 @@ class SaferSignalBleService : Service() {
                     BluetoothProfile.STATE_CONNECTED
                 ) {
 
+                    isConnecting = false
+                    isConnected = true
+
+                    cancelReconnect()
+
                     updateStatus(
                         "Connected"
                     )
@@ -405,11 +689,48 @@ class SaferSignalBleService : Service() {
                     BluetoothProfile.STATE_DISCONNECTED
                 ) {
 
-                    updateStatus(
-                        "Disconnected - reconnecting..."
-                    )
+                    isConnecting = false
+                    isConnected = false
 
-                    scheduleReconnect()
+                    try {
+
+                        gatt.close()
+
+                    } catch (
+                        e: Exception
+                    ) {
+
+                    }
+
+                    if (
+                        bluetoothGatt === gatt
+                    ) {
+
+                        bluetoothGatt = null
+                    }
+
+                    /*
+                     * If Bluetooth itself is still ON,
+                     * this is probably range, ESP32 power,
+                     * interference, etc.
+                     */
+
+                    if (
+                        bluetoothManager.adapter.isEnabled
+                    ) {
+
+                        updateStatus(
+                            "Disconnected - reconnecting..."
+                        )
+
+                        scheduleReconnect()
+
+                    } else {
+
+                        updateStatus(
+                            "Bluetooth is turned off"
+                        )
+                    }
                 }
             }
 
@@ -429,7 +750,9 @@ class SaferSignalBleService : Service() {
                         ALARM_UUID
                     )
 
-                if (characteristic != null) {
+                if (
+                    characteristic != null
+                ) {
 
                     enableNotifications(
                         gatt,
@@ -454,7 +777,7 @@ class SaferSignalBleService : Service() {
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic:
-                BluetoothGattCharacteristic
+                    BluetoothGattCharacteristic
             ) {
 
                 if (
@@ -471,7 +794,7 @@ class SaferSignalBleService : Service() {
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic:
-                BluetoothGattCharacteristic,
+                    BluetoothGattCharacteristic,
                 value: ByteArray
             ) {
 
@@ -487,11 +810,15 @@ class SaferSignalBleService : Service() {
             }
         }
 
+    // ----------------------------------------------------
+    // Enable notifications from ESP32
+    // ----------------------------------------------------
+
     @SuppressLint("MissingPermission")
     private fun enableNotifications(
         gatt: BluetoothGatt,
         characteristic:
-        BluetoothGattCharacteristic
+            BluetoothGattCharacteristic
     ) {
 
         gatt.setCharacteristicNotification(
@@ -504,7 +831,9 @@ class SaferSignalBleService : Service() {
                 CCCD_UUID
             )
 
-        if (descriptor != null) {
+        if (
+            descriptor != null
+        ) {
 
             if (
                 Build.VERSION.SDK_INT >=
@@ -532,11 +861,18 @@ class SaferSignalBleService : Service() {
         }
     }
 
+    // ----------------------------------------------------
+    // Receive alarm value
+    // ----------------------------------------------------
+
     private fun processAlarmValue(
         value: ByteArray
     ) {
 
-        if (value.isEmpty()) {
+        if (
+            value.isEmpty()
+        ) {
+
             return
         }
 
@@ -547,30 +883,38 @@ class SaferSignalBleService : Service() {
             newAlarmState ==
             alarmActive
         ) {
+
             return
         }
 
         alarmActive =
             newAlarmState
 
-        sendStatusBroadcast(
-            if (alarmActive) {
-                "Smoke Detected"
-            } else {
-                "Connected and Monitoring"
-            },
+        if (
             alarmActive
-        )
+        ) {
 
-        if (alarmActive) {
+            sendStatusBroadcast(
+                "Smoke Detected",
+                true
+            )
 
             startAlarm()
 
         } else {
 
+            sendStatusBroadcast(
+                "Connected and Monitoring",
+                false
+            )
+
             stopAlarm()
         }
     }
+
+    // ----------------------------------------------------
+    // Alarm ON
+    // ----------------------------------------------------
 
     private fun startAlarm() {
 
@@ -579,28 +923,21 @@ class SaferSignalBleService : Service() {
                 Vibrator::class.java
             )
 
-        val pattern = longArrayOf(
-            0,
-            1200,
-            200,
-            1200,
-            200,
-            1200
-        )
+        val pattern =
+            longArrayOf(
+                0,
+                800,
+                300,
+                800,
+                300
+            )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(
-                    VibrationEffect.createWaveform(pattern, 0)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(pattern, 0)
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator?.vibrate(pattern, 0)
-        }
+        vibrator?.vibrate(
+            VibrationEffect.createWaveform(
+                pattern,
+                0
+            )
+        )
 
         val notification =
             NotificationCompat.Builder(
@@ -643,6 +980,10 @@ class SaferSignalBleService : Service() {
         )
     }
 
+    // ----------------------------------------------------
+    // Alarm OFF
+    // ----------------------------------------------------
+
     private fun stopAlarm() {
 
         val vibrator =
@@ -662,20 +1003,72 @@ class SaferSignalBleService : Service() {
         )
     }
 
+    // ----------------------------------------------------
+    // Reconnection
+    // ----------------------------------------------------
+
     private fun scheduleReconnect() {
 
-        reconnectRunnable?.let {
-            handler.removeCallbacks(it)
+        if (
+            isConnected ||
+            isConnecting
+        ) {
+
+            return
         }
 
-        reconnectRunnable = Runnable {
-            if (hasBluetoothPermissions()) {
-                startScan()   // 🔥 force scan instead of connectAutomatically
+        /*
+         * If Bluetooth itself is OFF,
+         * don't repeatedly retry.
+         *
+         * BluetoothStateReceiver will restart
+         * the connection when Bluetooth turns ON.
+         */
+
+        if (
+            !bluetoothManager.adapter.isEnabled
+        ) {
+
+            return
+        }
+
+        cancelReconnect()
+
+        reconnectRunnable =
+            Runnable {
+
+                if (
+                    hasBluetoothPermissions() &&
+                    bluetoothManager.adapter.isEnabled &&
+                    !isConnected &&
+                    !isConnecting
+                ) {
+
+                    connectAutomatically()
+                }
             }
+
+        handler.postDelayed(
+            reconnectRunnable!!,
+            5000
+        )
+    }
+
+    private fun cancelReconnect() {
+
+        reconnectRunnable?.let {
+
+            handler.removeCallbacks(
+                it
+            )
         }
 
-        handler.postDelayed(reconnectRunnable!!, 5000)
+        reconnectRunnable = null
     }
+
+    // ----------------------------------------------------
+    // UI status
+    // ----------------------------------------------------
 
     private fun updateStatus(
         status: String
@@ -721,28 +1114,45 @@ class SaferSignalBleService : Service() {
         )
     }
 
+    // ----------------------------------------------------
+    // Service shutdown
+    // ----------------------------------------------------
+
     @SuppressLint("MissingPermission")
     override fun onDestroy() {
+
         super.onDestroy()
 
-        reconnectRunnable?.let {
-            handler.removeCallbacks(it)
+        cancelReconnect()
+
+        stopBleScan()
+
+        try {
+
+            unregisterReceiver(
+                bluetoothStateReceiver
+            )
+
+        } catch (
+            e: Exception
+        ) {
+
         }
 
         try {
 
-            bluetoothManager.adapter
-                .bluetoothLeScanner
-                ?.stopScan(
-                    scanCallback
-                )
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
+
         }
 
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
-
         bluetoothGatt = null
+
+        isConnecting = false
+        isConnected = false
     }
 }
