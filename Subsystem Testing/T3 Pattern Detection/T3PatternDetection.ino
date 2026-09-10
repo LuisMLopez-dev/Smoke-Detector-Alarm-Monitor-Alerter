@@ -103,7 +103,7 @@ void loop(){
 
         if(lastState){
           // The beep ended
-          if(duration > PULSE_MIN && duration < PULSE_MAX){
+          if(duration >= PULSE_MIN && duration <= PULSE_MAX){
             pulseCount++;
             Serial.println("Pulse OK");
           }
@@ -122,7 +122,7 @@ void loop(){
 
           // Validate full T3 pattern
           if(pulseCount == 3){
-            if(duration > LONG_PAUSE_MIN && duration < LONG_PAUSE_MAX){
+            if(duration >= LONG_PAUSE_MIN && duration <= LONG_PAUSE_MAX){
               Serial.println("T3 DETECTED");
               alarmActive = true;
               alarmLatchedTime = now;
