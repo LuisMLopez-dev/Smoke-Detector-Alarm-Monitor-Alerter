@@ -258,42 +258,37 @@ class SaferSignalBleService : Service() {
 
     private fun createNotificationChannels() {
 
-        val manager =
-            getSystemService(
-                NotificationManager::class.java
-            )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
-        val monitoringChannel =
-            NotificationChannel(
-                SERVICE_CHANNEL_ID,
-                "Safer Signal Monitoring",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
+            val manager =
+                getSystemService(NotificationManager::class.java)
 
-                description =
-                    "Keeps Safer Signal connected and monitoring."
-            }
+            val monitoringChannel =
+                NotificationChannel(
+                    SERVICE_CHANNEL_ID,
+                    "Safer Signal Monitoring",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description =
+                        "Keeps Safer Signal connected and monitoring."
+                }
 
-        manager.createNotificationChannel(
-            monitoringChannel
-        )
+            manager.createNotificationChannel(monitoringChannel)
 
-        val alarmChannel =
-            NotificationChannel(
-                ALARM_CHANNEL_ID,
-                "Safer Signal Emergency Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
+            val alarmChannel =
+                NotificationChannel(
+                    ALARM_CHANNEL_ID,
+                    "Safer Signal Emergency Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description =
+                        "Emergency smoke alarm notifications"
 
-                description =
-                    "Emergency smoke alarm notifications"
+                    enableVibration(true)
+                }
 
-                enableVibration(true)
-            }
-
-        manager.createNotificationChannel(
-            alarmChannel
-        )
+            manager.createNotificationChannel(alarmChannel)
+        }
     }
 
     private fun buildMonitoringNotification(
@@ -777,7 +772,7 @@ class SaferSignalBleService : Service() {
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic:
-                    BluetoothGattCharacteristic
+                BluetoothGattCharacteristic
             ) {
 
                 if (
@@ -794,7 +789,7 @@ class SaferSignalBleService : Service() {
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic:
-                    BluetoothGattCharacteristic,
+                BluetoothGattCharacteristic,
                 value: ByteArray
             ) {
 
@@ -818,7 +813,7 @@ class SaferSignalBleService : Service() {
     private fun enableNotifications(
         gatt: BluetoothGatt,
         characteristic:
-            BluetoothGattCharacteristic
+        BluetoothGattCharacteristic
     ) {
 
         gatt.setCharacteristicNotification(
@@ -919,25 +914,23 @@ class SaferSignalBleService : Service() {
     private fun startAlarm() {
 
         val vibrator =
-            getSystemService(
-                Vibrator::class.java
-            )
+            getSystemService(Vibrator::class.java)
 
-        val pattern =
-            longArrayOf(
-                0,
-                800,
-                300,
-                800,
-                300
-            )
-
-        vibrator?.vibrate(
-            VibrationEffect.createWaveform(
-                pattern,
-                0
-            )
+        val pattern = longArrayOf(
+            0, 1200, 200, 1200, 200, 1200
         )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            vibrator?.vibrate(
+                VibrationEffect.createWaveform(pattern, 0)
+            )
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            vibrator?.vibrate(pattern, 0)
+        }
 
         val notification =
             NotificationCompat.Builder(
