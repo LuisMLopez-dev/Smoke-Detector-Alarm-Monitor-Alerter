@@ -2,120 +2,118 @@
   TEST: BLE Transmitter from microcontroller to phone
 
   PURPOSE:
-  - Validate BLE communication between ESP32 and Android app
+  - Validate BLE communication between ESP32 and the Safer Signal Android app
   - Confirm reliable advertising, connection, and reconnection behavior
   - Verify characteristic notifications correctly transmit alarm state
 
   METHOD:
-  - ESP32 advertises with custom service UUID and device name "Safer Signal"
-  - Android app scans for device by name or service UUID
-  - Upon connection, ESP32 sends alternating values, 0 and 1, every 2 seconds
+  - ESP32 advertises with device name "Safer Signal" and a custom service UUID
+  - Android app scans for the device by name, then connects and subscribes
+    to notifications on the alarm characteristic via CCCD 0x2902
+  - ESP32 toggles the characteristic value between 0 and 1 every 2 seconds,
+    and sends it as a BLE notification whenever a phone is connected
   - App receives notifications and updates UI/alarm state accordingly
 
   EXPECTED RESULTS:
   - App successfully connects and subscribes to notifications
-  - Received values toggle between 0 (no alarm) and 1 (alarm)
+  - Received values toggle between 0, no alarm, and 1, alarm
   - App updates UI and triggers vibration/notification correctly
-  - Device automatically reconnects after disconnection
+  - Both sides recover automatically after a disconnection or BT toggle
+
+  NOTES ON RECONNECTION:
+  - ESP32 restarts advertising in the onDisconnect callback
+  - Android app retries the saved device address every 5 seconds
 */
 
 #include <NimBLEDevice.h>
 
 #define DEVICE_NAME "Safer Signal"
 
-// Custom service and characteristic UUIDs
 static NimBLEUUID serviceUUID("12345678-1234-1234-1234-123456789001");
 static NimBLEUUID charUUID("12345678-1234-1234-1234-123456789002");
 
 NimBLECharacteristic *testCharacteristic;
+NimBLEServer *pServer;
+NimBLEAdvertising *pAdvertising;
 
-// Test toggle state (simulates alarm ON/OFF)
-bool testState = false;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
 
-// BLE Server Callbacks
-class MyServerCallbacks : public NimBLEServerCallbacks {
+// Server callbacks
+class ServerCallbacks : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
+        deviceConnected = true;
+        Serial.println("Client connected");
+        // Stop advertising while connected
+        NimBLEDevice::getAdvertising()->stop();
+    }
 
-  void onConnect(NimBLEServer* pServer) {
-    Serial.println("Client CONNECTED");
-  }
-
-  void onDisconnect(NimBLEServer* pServer) {
-    Serial.println("Client DISCONNECTED");
-
-    // Restarts advertising so the phone can reconnect automatically
-    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-    adv->start();
-
-    Serial.println("Advertising restarted");
-  }
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
+        deviceConnected = false;
+        Serial.printf("Client disconnected, reason=%d\n", reason);
+        // Restart advertising so phone can reconnect
+        NimBLEDevice::getAdvertising()->start();
+        Serial.println("Advertising restarted");
+    }
 };
 
-void setup(){
+void setup() {
+    Serial.begin(115200);
+    delay(500);
+    Serial.println("Starting BLE...");
 
-  Serial.begin(115200);
+    NimBLEDevice::init(DEVICE_NAME);
 
-  // Initialize BLE device with name
-  NimBLEDevice::init(DEVICE_NAME);
+    pServer = NimBLEDevice::createServer();
+    pServer->setCallbacks(new ServerCallbacks());
 
-  // Create BLE server
-  NimBLEServer *pServer = NimBLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+    NimBLEService *pService = pServer->createService(serviceUUID);
 
-  // Create custom service
-  NimBLEService *pService = pServer->createService(serviceUUID);
+    testCharacteristic = pService->createCharacteristic(
+        charUUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    );
 
-  // Create characteristic, for read and notify
-  testCharacteristic = pService->createCharacteristic(charUUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    // CCCD descriptor
+    testCharacteristic->createDescriptor(
+        NimBLEUUID((uint16_t)0x2902),
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
+    );
 
-  // CCCD descriptor, which are required for notifications on Android
-  testCharacteristic->createDescriptor(NimBLEUUID((uint16_t)0x2902),NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    pService->start();
 
-  // Start the service
-  pService->start();
+    // Advertising
+    pAdvertising = NimBLEDevice::getAdvertising();
+    pAdvertising->setName(DEVICE_NAME);
+    pAdvertising->addServiceUUID(serviceUUID);
+    pAdvertising->enableScanResponse(true);
+    pAdvertising->start();
 
-  // Advertising Setup
-  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-
-  // Main advertisement packet
-  NimBLEAdvertisementData advData;
-  advData.setName(DEVICE_NAME);
-  advData.addServiceUUID(serviceUUID);
-
-  pAdvertising->setAdvertisementData(advData);
-
-  NimBLEAdvertisementData scanResp;
-  scanResp.setName(DEVICE_NAME);
-  pAdvertising->setScanResponseData(scanResp);
-
-  // Start advertising
-  pAdvertising->start();
-
-  Serial.println("BLE Ready");
+    Serial.println("BLE advertising started");
 }
 
 void loop() {
+    static bool testState = false;
+    uint8_t value = testState ? 1 : 0;
 
-  // Convert boolean state to byte (0 or 1)
-  uint8_t value;
+    // Handle connect/disconnect transitions
+    if (deviceConnected && !oldDeviceConnected) {
+        oldDeviceConnected = deviceConnected;
+    }
+    if (!deviceConnected && oldDeviceConnected) {
+        oldDeviceConnected = deviceConnected;
+    }
 
-  if (testState == true){
-    value = 1;
-  } 
-  else{
-    value = 0;
-  }
+    testCharacteristic->setValue(&value, 1);
 
-  // Update characteristic value
-  testCharacteristic->setValue(&value, 1);
+    if (deviceConnected) {
+        testCharacteristic->notify();
+        Serial.print("Sent: ");
+        Serial.println(value);
+    } else {
+        Serial.println("Waiting for connection...");
+    }
 
-  // Send notification to connected device
-  testCharacteristic->notify();
-
-  Serial.print("Sent: ");
-  Serial.println(value);
-
-  // Toggle state for next transmission
-  testState = !testState;
-
-  delay(2000);
+    testState = !testState;
+    delay(2000);
 }
