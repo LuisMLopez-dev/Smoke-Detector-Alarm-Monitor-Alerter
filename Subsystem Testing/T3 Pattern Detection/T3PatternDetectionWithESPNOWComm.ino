@@ -22,9 +22,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-// ============================================================
-// PIN / TUNING CONSTANTS (T3 Detection)
-// ============================================================
+// Pins and Tuning constants
 #define ADC_PIN 1
 #define LED_PIN 4
 
@@ -53,16 +51,10 @@
 
 #define ALARM_HOLD_TIME 8000
 
-// ============================================================
 // ESP-NOW TIMING
-// ============================================================
-// Receiver failsafe timeout is 5s. Heartbeat at 1s gives 5x margin.
-// If 4 consecutive heartbeats drop, receiver will alarm (fail-safe).
-#define HEARTBEAT_INTERVAL_MS 1000
+#define HEARTBEAT_INTERVAL_MS 1000 // Receiver failsafe timeout is 5s. Heartbeat is at 1s giving a 5x margin.
 
-// ============================================================
 // T3 DETECTION STATE
-// ============================================================
 bool currentState = false;
 bool lastState = false;
 
@@ -77,9 +69,7 @@ int pulseCount = 0;
 bool alarmActive = false;
 bool lastAlarmActive = false; // For edge detection on ESP-NOW send
 
-// ============================================================
 // ESP-NOW
-// ============================================================
 typedef struct {
   bool alarm;
 } Message;
@@ -93,48 +83,45 @@ uint8_t receiver1[] = {0xE8, 0x3D, 0xC1, 0xF5, 0x10, 0xF8}; // MCU 2
 uint8_t receiver2[] = {0xE8, 0x3D, 0xC1, 0xF5, 0x10, 0x74}; // MCU 3
 
 // Callback to confirm send status
-void onSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+void onSent(const wifi_tx_info_t *info, esp_now_send_status_t status){
   // Comment out to reduce serial spam if needed
   Serial.print("Send Status: ");
-  if (status == ESP_NOW_SEND_SUCCESS) {
+  if(status == ESP_NOW_SEND_SUCCESS){
     Serial.println("Success");
-  } else {
+  } 
+  else{
     Serial.println("Fail");
   }
 }
 
-// ============================================================
 // ESP-NOW TRANSMIT HELPER
-// ============================================================
-void transmitAlarmState(bool state, bool isEdge) {
+void transmitAlarmState(bool state, bool isEdge){
   msg.alarm = state;
   esp_now_send(receiver1, (uint8_t *)&msg, sizeof(msg));
   esp_now_send(receiver2, (uint8_t *)&msg, sizeof(msg));
 
-  if (isEdge) {
+  if(isEdge){
     Serial.print("TX Alarm (edge): ");
     Serial.println(state ? "ON" : "OFF");
-  } else {
-    // Heartbeat — quiet marker so serial stays readable
+  } 
+  else{
     Serial.print("[HB ");
     Serial.print(state ? "ON" : "OFF");
     Serial.println("]");
   }
 }
 
-// ============================================================
 // SETUP
-// ============================================================
-void setup() {
+void setup(){
   Serial.begin(115200);
   analogReadResolution(12);
   pinMode(LED_PIN, OUTPUT);
 
-  // --- ESP-NOW Init ---
+  // ESP-NOW Init 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  if (esp_now_init() != ESP_OK) {
+  if(esp_now_init() != ESP_OK){
     Serial.println("Error initializing ESP-NOW");
     return;
   }
@@ -146,7 +133,7 @@ void setup() {
   memcpy(peer1.peer_addr, receiver1, 6);
   peer1.channel = 0;
   peer1.encrypt = false;
-  if (esp_now_add_peer(&peer1) != ESP_OK) {
+  if(esp_now_add_peer(&peer1) != ESP_OK){
     Serial.println("Failed to add peer1");
     return;
   }
@@ -156,7 +143,7 @@ void setup() {
   memcpy(peer2.peer_addr, receiver2, 6);
   peer2.channel = 0;
   peer2.encrypt = false;
-  if (esp_now_add_peer(&peer2) != ESP_OK) {
+  if(esp_now_add_peer(&peer2) != ESP_OK){
     Serial.println("Failed to add peer2");
     return;
   }
@@ -164,14 +151,12 @@ void setup() {
   Serial.println("Transmitter ready.");
 }
 
-// ============================================================
 // LOOP
-// ============================================================
-void loop() {
+void loop(){
   unsigned long nowMicros = micros();
 
   // Sampling at fixed rate
-  if (nowMicros - lastSampleTime >= SAMPLE_PERIOD_US) {
+  if(nowMicros - lastSampleTime >= SAMPLE_PERIOD_US){
     lastSampleTime = nowMicros;
 
     int sample = analogRead(ADC_PIN);
@@ -181,12 +166,13 @@ void loop() {
     envelope = envelope * DECAY + amplitude * (1 - DECAY);
 
     // Hysteresis on envelope
-    if (currentState) {
-      if (envelope < THRESHOLD_LOW) {
+    if(currentState){
+      if(envelope < THRESHOLD_LOW){
         currentState = false;
       }
-    } else {
-      if (envelope > THRESHOLD_HIGH) {
+    } 
+    else{
+      if(envelope > THRESHOLD_HIGH){
         currentState = true;
       }
     }
@@ -194,34 +180,33 @@ void loop() {
     unsigned long now = millis();
 
     // State transition detection
-    if (currentState != lastState) {
+    if(currentState != lastState){
       unsigned long duration = now - lastTransition;
 
-      if (duration >= MIN_VALID_STATE_TIME) {
+      if(duration >= MIN_VALID_STATE_TIME){
         lastTransition = now;
         stateStartTime = now;
 
-        if (lastState) {
-          // Beep ended
-          if (duration >= PULSE_MIN && duration <= PULSE_MAX) {
+        if(lastState){ // Beep ended
+          if(duration >= PULSE_MIN && duration <= PULSE_MAX){
             pulseCount++;
             Serial.println("Pulse OK");
-          } else {
+          } 
+          else{
             pulseCount = 0;
           }
-        } else {
-          // Pause ended
-
+        } 
+        else{ // Pause ended
           // Validate short pauses between beeps
-          if (pulseCount > 0 && pulseCount < 3) {
-            if (duration < SHORT_PAUSE_MIN || duration > SHORT_PAUSE_MAX) {
+          if(pulseCount > 0 && pulseCount < 3){
+            if(duration < SHORT_PAUSE_MIN || duration > SHORT_PAUSE_MAX){
               pulseCount = 0;
             }
           }
 
           // Validate full T3 pattern
-          if (pulseCount == 3) {
-            if (duration >= LONG_PAUSE_MIN && duration <= LONG_PAUSE_MAX) {
+          if(pulseCount == 3){
+            if(duration >= LONG_PAUSE_MIN && duration <= LONG_PAUSE_MAX){
               Serial.println("T3 DETECTED");
               alarmActive = true;
               alarmLatchedTime = now;
@@ -235,48 +220,50 @@ void loop() {
     }
 
     // State-based timeout protection
-    if (currentState) {
-      if (now - stateStartTime > PULSE_MAX + 200) {
+    if(currentState){
+      if(now - stateStartTime > PULSE_MAX + 200){
         pulseCount = 0;
       }
-    } else {
-      if (pulseCount > 0 && pulseCount < 3) {
-        if (now - stateStartTime > SHORT_PAUSE_MAX + 150) {
+    } 
+    else{
+      if(pulseCount > 0 && pulseCount < 3){
+        if(now - stateStartTime > SHORT_PAUSE_MAX + 150){
           pulseCount = 0;
         }
-      } else if (pulseCount == 3) {
-        if (now - stateStartTime > LONG_PAUSE_MAX + 200) {
+      } 
+      else if(pulseCount == 3){
+        if (now - stateStartTime > LONG_PAUSE_MAX + 200){
           pulseCount = 0;
         }
       }
     }
 
     // Alarm Hold Logic
-    if (alarmActive) {
-      if (now - alarmLatchedTime <= ALARM_HOLD_TIME) {
+    if(alarmActive){
+      if(now - alarmLatchedTime <= ALARM_HOLD_TIME){
         digitalWrite(LED_PIN, HIGH);
-      } else {
+      } 
+      else{
         alarmActive = false;
         digitalWrite(LED_PIN, LOW);
       }
-    } else {
+    } 
+    else{
       digitalWrite(LED_PIN, LOW);
     }
   }
 
-  // ============================================================
-  // ESP-NOW: edge send (fast reaction) + heartbeat (watchdog)
-  // Runs every loop iteration, independent of ADC cadence.
-  // ============================================================
+  // Unified TX: edge and a heartbeat
   unsigned long now = millis();
   bool edgeChanged = (alarmActive != lastAlarmActive);
   bool heartbeatDue = (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS);
 
-  if (edgeChanged) {
+  if(edgeChanged){
     transmitAlarmState(alarmActive, true);
     lastAlarmActive = alarmActive;
     lastHeartbeat = now; // Reset heartbeat timer on edge send
-  } else if (heartbeatDue) {
+  } 
+  else if(heartbeatDue){
     transmitAlarmState(alarmActive, false);
     lastHeartbeat = now;
   }
