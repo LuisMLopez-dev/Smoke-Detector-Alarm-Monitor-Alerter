@@ -13,7 +13,7 @@
 
 #define MIN_VALID_STATE_TIME 60 // Minimum time in ms that a state must be held before it is accepted as a real transition. Filters out very short glitches
 
-#define SAMPLE_RATE 8000 // 8 kHz, or 8,000 samples per second. Nyquist = 4 kHz, LPF before ADC is 4.88 kHz, and smoke alarms can be ~520 Hz up to about 3 kHz
+#define SAMPLE_RATE 8000 // 8 kHz, or 8,000 samples per second. Nyquist = 4 kHz, smoke alarms can be ~520 Hz up to about 3 kHz
 #define SAMPLE_PERIOD_US (1000000 / SAMPLE_RATE) // Time in microseconds between samples. 1,000,000 µs / 8000 = 125 µs per sample
 
 #define PULSE_MIN 200 // Minimum pulse duration in ms. Tuned for the tested alarm pattern
