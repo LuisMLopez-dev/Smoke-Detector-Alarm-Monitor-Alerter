@@ -86,4 +86,9 @@ void loop(){
 
   // Changes the previousAlarmState to be the current alarmState each iteration of the loop(), to handle whether the alarm just turned on after being off
   previousAlarmState = alarmState;
+
+  
+  Serial.println(alarmState); // Prints the current alarm state for testing verification
+
+  delay(10); // Very small delay to prevent the loop from running too fast and flooding the serial output
 }
