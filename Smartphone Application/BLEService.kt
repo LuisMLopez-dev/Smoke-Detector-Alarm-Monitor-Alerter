@@ -14,7 +14,9 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -24,6 +26,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.ParcelUuid
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.app.NotificationCompat
@@ -40,10 +43,16 @@ class SaferSignalBleService : Service() {
         const val SERVICE_NOTIFICATION_ID = 2001
         const val ALARM_NOTIFICATION_ID = 1001
 
-        const val PREFS_NAME = "SaferSignalPrefs"
-        const val SAVED_DEVICE_ADDRESS = "savedDeviceAddress"
-
         const val SAFER_SIGNAL_DEVICE_NAME = "Safer Signal"
+
+        // Time (ms) to wait for a GATT connection to complete before
+        // declaring the attempt failed and restarting the scan.
+        const val CONNECTION_TIMEOUT_MS = 8000L
+
+        // Backoff used when a scan or connection attempt fails, and we
+        // need to try again. Kept long enough to avoid Android's BLE
+        // scan throttling (5 scans in 30s, then 1 per 30s per app).
+        const val RECONNECT_DELAY_MS = 8000L
 
         val SERVICE_UUID: UUID =
             UUID.fromString(
@@ -75,6 +84,7 @@ class SaferSignalBleService : Service() {
     private var bluetoothGatt: BluetoothGatt? = null
 
     private var reconnectRunnable: Runnable? = null
+    private var connectionTimeoutRunnable: Runnable? = null
 
     private var isScanning = false
     private var isConnecting = false
@@ -110,7 +120,7 @@ class SaferSignalBleService : Service() {
                         BluetoothAdapter.STATE_OFF -> {
 
                             cancelReconnect()
-
+                            cancelConnectionTimeout()
                             stopBleScan()
 
                             isConnecting = false
@@ -368,6 +378,13 @@ class SaferSignalBleService : Service() {
 
     // ----------------------------------------------------
     // Automatic connection
+    //
+    // Note: We deliberately do NOT cache the ESP32's MAC
+    // address. The ESP32 regenerates its BLE MAC on every
+    // power cycle, so a previously saved address becomes
+    // stale as soon as the listener is unplugged. We always
+    // discover the device by scanning for its advertised
+    // name instead.
     // ----------------------------------------------------
 
     @SuppressLint("MissingPermission")
@@ -408,53 +425,7 @@ class SaferSignalBleService : Service() {
             return
         }
 
-        val preferences =
-            getSharedPreferences(
-                PREFS_NAME,
-                Context.MODE_PRIVATE
-            )
-
-        val savedAddress =
-            preferences.getString(
-                SAVED_DEVICE_ADDRESS,
-                null
-            )
-
-        if (savedAddress != null) {
-
-            try {
-
-                val device =
-                    adapter.getRemoteDevice(
-                        savedAddress
-                    )
-
-                updateStatus(
-                    "Reconnecting..."
-                )
-
-                connectToDevice(
-                    device
-                )
-
-            } catch (e: Exception) {
-
-                /*
-                 * If saved address cannot be used,
-                 * fall back to scanning.
-                 */
-
-                startScan()
-            }
-
-        } else {
-
-            /*
-             * First time setup.
-             */
-
-            startScan()
-        }
+        startScan()
     }
 
     // ----------------------------------------------------
@@ -500,9 +471,45 @@ class SaferSignalBleService : Service() {
 
         isScanning = true
 
-        scanner.startScan(
-            scanCallback
-        )
+        /*
+         * Filter by the advertised service UUID. This is
+         * cheaper than matching by name and much less likely
+         * to be throttled by Android, since the scanner only
+         * wakes us for devices that advertise the Safer
+         * Signal service.
+         */
+        val filter =
+            ScanFilter.Builder()
+                .setServiceUuid(
+                    ParcelUuid(SERVICE_UUID)
+                )
+                .build()
+
+        val settings =
+            ScanSettings.Builder()
+                .setScanMode(
+                    ScanSettings.SCAN_MODE_LOW_LATENCY
+                )
+                .build()
+
+        try {
+
+            scanner.startScan(
+                listOf(filter),
+                settings,
+                scanCallback
+            )
+
+        } catch (_: Exception) {
+
+            isScanning = false
+
+            updateStatus(
+                "Bluetooth scan failed"
+            )
+
+            scheduleReconnect()
+        }
     }
 
     private val scanCallback =
@@ -514,54 +521,67 @@ class SaferSignalBleService : Service() {
                 result: ScanResult
             ) {
 
+                /*
+                 * Defense in depth: verify we still hold the
+                 * Bluetooth permissions before touching
+                 * anything that requires them. Permissions can
+                 * be revoked while the service is running.
+                 */
+                if (!hasBluetoothPermissions()) {
+
+                    updateStatus(
+                        "Bluetooth permission required"
+                    )
+
+                    return
+                }
+
                 val device =
                     result.device
 
+                /*
+                 * Double-check by name as well, in case some
+                 * other device happens to advertise the same
+                 * service UUID during testing. The service
+                 * UUID filter is the primary matcher.
+                 *
+                 * Reading device.name requires BLUETOOTH_CONNECT
+                 * on Android 12+. We've already verified the
+                 * permission above, and we still catch
+                 * SecurityException as a final safety net.
+                 */
                 val deviceName =
                     try {
 
                         device.name
 
                     } catch (
-                        e: SecurityException
+                        _: SecurityException
                     ) {
 
                         null
                     }
 
                 if (
-                    deviceName ==
-                    SAFER_SIGNAL_DEVICE_NAME
+                    deviceName != null &&
+                    deviceName != SAFER_SIGNAL_DEVICE_NAME
                 ) {
 
-                    stopBleScan()
-
-                    /*
-                     * Save this specific ESP32.
-                     * User only needs initial setup once.
-                     */
-
-                    getSharedPreferences(
-                        PREFS_NAME,
-                        Context.MODE_PRIVATE
-                    )
-                        .edit()
-                        .putString(
-                            SAVED_DEVICE_ADDRESS,
-                            device.address
-                        )
-                        .apply()
-
-                    updateStatus(
-                        "Safer Signal found"
-                    )
-
-                    connectToDevice(
-                        device
-                    )
+                    return
                 }
+
+                stopBleScan()
+
+                updateStatus(
+                    "Safer Signal found"
+                )
+
+                connectToDevice(
+                    device
+                )
             }
 
+            @SuppressLint("MissingPermission")
             override fun onScanFailed(
                 errorCode: Int
             ) {
@@ -592,7 +612,7 @@ class SaferSignalBleService : Service() {
                 )
 
         } catch (
-            e: Exception
+            _: Exception
         ) {
 
             // Scanner may already be stopped.
@@ -621,13 +641,14 @@ class SaferSignalBleService : Service() {
         stopBleScan()
 
         cancelReconnect()
+        cancelConnectionTimeout()
 
         try {
 
             bluetoothGatt?.close()
 
         } catch (
-            e: Exception
+            _: Exception
         ) {
 
         }
@@ -647,6 +668,90 @@ class SaferSignalBleService : Service() {
                 false,
                 gattCallback
             )
+
+        /*
+         * If the connection does not complete within the
+         * timeout, treat it as a failure and restart the
+         * scan. This handles the case where Android silently
+         * drops a connectGatt() attempt (e.g. the device
+         * disappeared between the scan result and the
+         * connection request).
+         */
+        startConnectionTimeout()
+    }
+
+    // ----------------------------------------------------
+    // Connection timeout helpers
+    // ----------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    private fun startConnectionTimeout() {
+
+        cancelConnectionTimeout()
+
+        connectionTimeoutRunnable =
+            Runnable {
+
+                if (isConnecting && !isConnected) {
+
+                    isConnecting = false
+
+                    /*
+                     * Snapshot the GATT into a local val so we
+                     * can null-check it once and then call
+                     * close() on a stable reference. Each
+                     * Bluetooth call is wrapped in its own
+                     * try/catch(SecurityException), which is
+                     * the pattern lint's dataflow analysis
+                     * recognizes for permissioned calls.
+                     */
+                    val gatt =
+                        bluetoothGatt
+
+                    if (gatt != null) {
+
+                        try {
+
+                            gatt.close()
+
+                        } catch (
+                            _: SecurityException
+                        ) {
+
+                            // Permission was revoked during the
+                            // wait. Nothing more we can do here.
+
+                        } catch (
+                            _: Exception
+                        ) {
+
+                            // GATT may already be closed.
+                        }
+                    }
+
+                    bluetoothGatt = null
+
+                    updateStatus(
+                        "Connection timed out - retrying..."
+                    )
+
+                    scheduleReconnect()
+                }
+            }
+
+        handler.postDelayed(
+            connectionTimeoutRunnable!!,
+            CONNECTION_TIMEOUT_MS
+        )
+    }
+
+    private fun cancelConnectionTimeout() {
+
+        connectionTimeoutRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+
+        connectionTimeoutRunnable = null
     }
 
     // ----------------------------------------------------
@@ -668,6 +773,8 @@ class SaferSignalBleService : Service() {
                     BluetoothProfile.STATE_CONNECTED
                 ) {
 
+                    cancelConnectionTimeout()
+
                     isConnecting = false
                     isConnected = true
 
@@ -684,6 +791,8 @@ class SaferSignalBleService : Service() {
                     BluetoothProfile.STATE_DISCONNECTED
                 ) {
 
+                    cancelConnectionTimeout()
+
                     isConnecting = false
                     isConnected = false
 
@@ -692,7 +801,7 @@ class SaferSignalBleService : Service() {
                         gatt.close()
 
                     } catch (
-                        e: Exception
+                        _: Exception
                     ) {
 
                     }
@@ -1000,6 +1109,7 @@ class SaferSignalBleService : Service() {
     // Reconnection
     // ----------------------------------------------------
 
+    @SuppressLint("MissingPermission")
     private fun scheduleReconnect() {
 
         if (
@@ -1043,7 +1153,7 @@ class SaferSignalBleService : Service() {
 
         handler.postDelayed(
             reconnectRunnable!!,
-            5000
+            RECONNECT_DELAY_MS
         )
     }
 
@@ -1117,6 +1227,7 @@ class SaferSignalBleService : Service() {
         super.onDestroy()
 
         cancelReconnect()
+        cancelConnectionTimeout()
 
         stopBleScan()
 
@@ -1127,20 +1238,57 @@ class SaferSignalBleService : Service() {
             )
 
         } catch (
-            e: Exception
+            _: Exception
         ) {
 
         }
 
-        try {
+        /*
+         * Each Bluetooth call is wrapped in its own
+         * try/catch(SecurityException) block. Lint's
+         * dataflow analysis accepts this pattern because
+         * the SecurityException catch is directly adjacent
+         * to the call it guards.
+         */
 
-            bluetoothGatt?.disconnect()
-            bluetoothGatt?.close()
+        val gatt =
+            bluetoothGatt
 
-        } catch (
-            e: Exception
-        ) {
+        if (gatt != null) {
 
+            try {
+
+                gatt.disconnect()
+
+            } catch (
+                _: SecurityException
+            ) {
+
+                // Permission revoked during teardown.
+
+            } catch (
+                _: Exception
+            ) {
+
+                // GATT already disconnected.
+            }
+
+            try {
+
+                gatt.close()
+
+            } catch (
+                _: SecurityException
+            ) {
+
+                // Permission revoked during teardown.
+
+            } catch (
+                _: Exception
+            ) {
+
+                // GATT already closed.
+            }
         }
 
         bluetoothGatt = null
