@@ -7,17 +7,18 @@
 #define PWM_FREQ 5000 // PWM frequency in Hz. 5 kHz is well above audible range for the motor and avoids whine
 #define PWM_RES 8 // PWM resolution in bits. 8 bits gives duty values from 0 to 255
 
-#define START_DUTY 230 // Higher duty cycle applied briefly on motor startup to overcome static friction (startup kick)
-#define RUN_DUTY 200 // Lower duty cycle used to sustain the motor once it is spinning, reducing current draw
-#define START_TIME 200 // Duration in ms to hold the startup kick before dropping to RUN_DUTY
+#define RUN_DUTY 255 // Full duty
+
+// Pulsed vibration
+#define BURST_ON_MS 300 // Duration of each vibration burst, in ms
+#define BURST_OFF_MS 200 // Duration of the pause between bursts, in ms
+#define BURST_PERIOD_MS (BURST_ON_MS + BURST_OFF_MS) // Total burst cycle length
 
 unsigned long lastRecv = 0; // Stores the time of the last received data, in milliseconds
 const unsigned long timeout = 5000; // Timing for a failsafe to trigger alarms if communication protocols were to fail and exceed this time, in ms (1000 ms = 1 s)
 
 // Motor State Tracking
 bool alarmState = false; // Current alarm state from the received message. True = alarm is active
-bool motorRunning = false; // Tracks whether the motor is currently running, used to detect the OFF to ON transition for the startup kick
-unsigned long motorStartTime = 0; // Stores the time the motor was started, used to time the startup kick
 
 // Message Structure
 typedef struct{ // Typedef is used here to make an alias for this struct
@@ -68,25 +69,19 @@ void loop(){
     alarmState = true; // Trigger Alarm
   }
 
-  // Motor Control Logic
-  if (alarmState == true){ // If the alarm is active, the motor should be running
+  // Motor Control Logic: Pulsed vibration while the alarm is active, and pulsed to increase the noticeability of the vibrations
+  if (alarmState == true){
+    // The phase is equal to the remainder (0 to 499) of the current time in ms divided by the period of the burst
+    unsigned long phase = millis() % BURST_PERIOD_MS;
 
-    // If the motor is off, and it just turned ON based on the alarm state
-    if (motorRunning == false){
-      motorRunning = true; // Track that the motor is now running
-      motorStartTime = millis(); // Record the time the motor started, used for the startup kick timing
-
-      // Startup kick: apply a higher duty cycle briefly to overcome static friction and get the motor spinning reliably
-      ledcWrite(MOTOR_PIN, START_DUTY);
+    if (phase < BURST_ON_MS){ // If the phase is between 0 to 299, which is 300 total
+      ledcWrite(MOTOR_PIN, RUN_DUTY); // Inside the burst window, turn the Motor ON
     }
-
-    // After the startup kick window has elapsed, switch to the lower run duty for lower current draw
-    if (millis() - motorStartTime > START_TIME){
-      ledcWrite(MOTOR_PIN, RUN_DUTY);
+    else{
+      ledcWrite(MOTOR_PIN, 0); // Outside the burst window turn the motor OFF
     }
   }
   else{ // If the alarm is not active
-    motorRunning = false; // Track that the motor is not running
     ledcWrite(MOTOR_PIN, 0); // Turn and maintain motor OFF
   }
 
