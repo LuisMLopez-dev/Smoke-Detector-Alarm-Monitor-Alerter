@@ -26,7 +26,7 @@ Transmits alert status via:
 
 ### Wearable Alarm Unit
 - Receives ESP-NOW messages/data from the listener unit
-- Activates a vibration motor to alert the user through haptic feedback
+- Activates a vibration motor to alert the user through pulsed vibrations
 - Designed to provide immediate personal alerts
 
 ### Smartphone Application:
